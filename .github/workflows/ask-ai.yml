@@ -1,0 +1,25 @@
+name: Ask AI
+on:
+  workflow_dispatch:
+
+permissions:
+  models: read
+
+  jobs:
+  ask-ai:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: AI Inference
+        id: ai-response
+        uses: actions/ai-inference@v2
+        with:
+          token: {% raw %}${{ secrets.GITHUB_TOKEN }}{% endraw %}
+          prompt: |
+            Give me a programming joke.
+
+      - name: Display AI Response
+        run: |
+          echo "## 🤖 AI Response" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "{% raw %}${{ steps.ai-response.outputs.response }}{% endraw %}" >> $GITHUB_STEP_SUMMARY
