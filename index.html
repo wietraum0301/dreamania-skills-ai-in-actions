@@ -129,9 +129,9 @@ input[aria-invalid="true"]{border-color:var(--hot)}
       <li class="prize"><div class="e" aria-hidden="true">🍻</div><b>맥주 5잔 세트</b><small>한정 수량</small></li>
       <li class="prize"><div class="e" aria-hidden="true">🌮</div><b>나초</b><small>한정 수량</small></li>
       <li class="prize"><div class="e" aria-hidden="true">🫓</div><b>퀘사디아</b><small>한정 수량</small></li>
-      <li class="prize"><div class="e" aria-hidden="true">🍺</div><b>맥주 1잔</b><small>참가자 전원 보장</small></li>
+      <li class="prize"><div class="e" aria-hidden="true">🍺</div><b>맥주 1잔</b><small>435개 한정</small></li>
     </ul>
-    <p class="notice">1인 1회 참여 · 쿠폰은 입력하신 이메일로도 발송됩니다</p>
+    <p class="notice">휴대폰 번호 기준 1회 참여 · 총 500개 소진 시 추첨 종료 · 쿠폰 화면을 보관해 주세요</p>
     <button class="btn" id="btnStart" type="button">게임 시작하기 ▶</button>
     <button class="btn ghost" id="btnMine" type="button" hidden>내 쿠폰 다시 보기</button>
   </section>
@@ -184,6 +184,7 @@ input[aria-invalid="true"]{border-color:var(--hot)}
       <div class="hub" aria-hidden="true">100%<br>당첨</div>
     </div>
     <div class="spin-wait" id="spinMsg" aria-live="polite"></div>
+    <p class="notice">남은 재고에 따라 추첨합니다. 룰렛의 칸 크기는 당첨 확률과 다릅니다.</p>
     <button class="btn" id="btnSpin" type="button">룰렛 돌리기 🎰</button>
   </section>
 
@@ -214,9 +215,7 @@ input[aria-invalid="true"]{border-color:var(--hot)}
 <script>
 (function(){
 'use strict';
-/* ===== 설정: Power Automate 'HTTP 요청을 받은 경우' 트리거의 URL을 넣으세요 ===== */
-var API_URL = '';
-/* ================================================================================ */
+var API_URL = '/api/roulette';
 var LINKS={
   pro:'https://github.com/github-copilot/signup?ref_product=copilot&ref_type=trial&ref_style=button&ref_plan=pro',
   keynote:'https://www.youtube.com/watch?v=AArI948SDz8',
@@ -231,7 +230,6 @@ var PRIZES={
 };
 var SEGMENTS=['beer5','beer1','nachos','beer1','quesa','beer1','nachos','beer1','quesa','beer1'];
 var ROLES=['개발','기획','디자인','영업·마케팅','경영·관리','기타'];
-function remaining(){return 1;}
 
 /* ---------- 공통 ---------- */
 function $(id){return document.getElementById(id);}
@@ -252,16 +250,25 @@ function tap(el,fn){
   el.addEventListener('click',h);
 }
 function vibrate(p){try{if(navigator.vibrate)navigator.vibrate(p);}catch(e){}}
-function pad(n){return (n<10?'0':'')+n;}
-function nowStr(d){d=d||new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());}
 
 document.getElementById('lnkPro').href=LINKS.pro;
 document.getElementById('lnkKeynote').href=LINKS.keynote;
 document.getElementById('lnkRecap').href=LINKS.recap;
 
 /* ---------- 이 기기의 내 쿠폰 (새로 고침 대비) ---------- */
-function loadMine(){try{return JSON.parse(localStorage.getItem(KEY));}catch(e){return null;}}
-function saveMine(c){try{localStorage.setItem(KEY,JSON.stringify(c));}catch(e){}}
+function loadMine(){
+  try{
+    var c=JSON.parse(localStorage.getItem(KEY));
+    return c&&Object.prototype.hasOwnProperty.call(PRIZES,c.prizeKey)&&
+      typeof c.code==='string'&&/^[A-Za-z0-9-]{8,80}$/.test(c.code)&&
+      typeof c.nickname==='string'&&typeof c.company==='string'&&
+      typeof c.wonAt==='string'&&Number.isFinite(Date.parse(c.wonAt))?c:null;
+  }catch(e){console.warn('쿠폰 저장 정보를 읽을 수 없습니다.');return null;}
+}
+function saveMine(c){
+  try{localStorage.setItem(KEY,JSON.stringify(c));return true;}
+  catch(e){console.warn('쿠폰을 기기에 저장할 수 없습니다.');return false;}
+}
 if(loadMine())$('btnMine').hidden=false;
 tap($('btnMine'),function(){var c=loadMine();if(c)showCoupon(c,false);});
 
@@ -292,7 +299,8 @@ $('joinForm').addEventListener('submit',function(e){
   if(setErr('inAgree',!agree))bad.push('inAgree');
   if(bad.length){var f=$(bad[0]);if(f===chips)f=chips.firstChild;f&&f.focus();return;}
   document.activeElement&&document.activeElement.blur&&document.activeElement.blur();
-  player={fullName:name,nickname:nick,company:comp,phone:fmtPhone(phone),email:email,jobRole:role};
+  player={fullName:name,nickname:nick,company:comp,phone:fmtPhone(phone),email:email,jobRole:role,consent:agree};
+  $('btnSpin').disabled=false;$('spinMsg').textContent='';
   show('s-game');setTimeout(startGame,60);
 });
 
@@ -402,7 +410,7 @@ function drawWheel(){
   for(var i=0;i<n;i++){
     var k=SEGMENTS[i],a0=-Math.PI/2+i*seg,a1=a0+seg;
     wctx.beginPath();wctx.moveTo(R,R);wctx.arc(R,R,R,a0,a1);wctx.closePath();
-    wctx.fillStyle=PRIZES[k].color;wctx.globalAlpha=(remaining(k)>0)?1:0.35;wctx.fill();wctx.globalAlpha=1;
+    wctx.fillStyle=PRIZES[k].color;wctx.fill();
     wctx.strokeStyle='#0d1117';wctx.lineWidth=6;wctx.stroke();
     wctx.save();wctx.translate(R,R);wctx.rotate(a0+seg/2);
     wctx.textAlign='right';wctx.textBaseline='middle';wctx.fillStyle='#fff';
@@ -416,7 +424,7 @@ drawWheel();
 function postJSON(url,data,timeoutMs){
   return new Promise(function(resolve,reject){
     var x=new XMLHttpRequest();x.open('POST',url,true);x.setRequestHeader('Content-Type','application/json');x.timeout=timeoutMs;
-    x.onload=function(){var j=null;try{j=JSON.parse(x.responseText);}catch(e){}resolve({status:x.status,body:j});};
+    x.onload=function(){try{resolve({status:x.status,body:JSON.parse(x.responseText)});}catch(e){reject(new Error('invalid_response'));}};
     x.onerror=function(){reject(new Error('network'));};x.ontimeout=function(){reject(new Error('timeout'));};
     x.send(JSON.stringify(data));
   });
@@ -431,21 +439,29 @@ function spinTo(k,cb){
 }
 tap($('btnSpin'),function(){
   if(spinning)return;
-  if(!API_URL){$('spinMsg').textContent='행사 준비 중입니다. 스태프에게 문의해 주세요.';return;}
   spinning=true;$('btnSpin').disabled=true;$('spinMsg').textContent='경품을 추첨하고 있어요…';
-  var payload={fullName:player.fullName,nickname:player.nickname,company:player.company,phone:player.phone,email:player.email,jobRole:player.jobRole,score:score,bugs:caught};
+  var payload={fullName:player.fullName,nickname:player.nickname,company:player.company,phone:player.phone,email:player.email,jobRole:player.jobRole,consent:player.consent,score:score,bugs:caught};
   postJSON(API_URL,payload,30000).then(function(r){
     var b=r.body||{};
-    if(r.status>=200&&r.status<300&&b.code&&PRIZES[b.prizeKey]){
+    if(r.status===409&&b.error==='sold_out'){
+      spinning=false;$('spinMsg').textContent='준비된 경품 500개가 모두 소진되었습니다. 스태프에게 문의해 주세요.';return;
+    }
+    if(r.status>=200&&r.status<300&&b.code&&Object.prototype.hasOwnProperty.call(PRIZES,b.prizeKey)&&
+      (b.status==='awarded'||b.status==='duplicate')){
       $('spinMsg').textContent='';
-      var c={code:String(b.code),prizeKey:b.prizeKey,fullName:player.fullName,nickname:player.nickname,company:player.company,email:player.email,wonAt:nowStr(),duplicate:b.status==='duplicate',mailed:b.mailed!==false};
-      saveMine(c);
+      var c={code:String(b.code),prizeKey:b.prizeKey,nickname:b.nickname,company:b.company,wonAt:b.wonAt,duplicate:b.status==='duplicate',mailed:b.mailed===true};
+      c.saved=saveMine(c);
       if(c.duplicate){spinning=false;showCoupon(c,false);return;}
       spinTo(c.prizeKey,function(){spinning=false;showCoupon(c,true);});
-    }else{throw new Error('bad response '+r.status);}
-  }).catch(function(){
+    }else{
+      var error=new Error(b.error||'invalid_response');throw error;
+    }
+  }).catch(function(error){
     spinning=false;$('btnSpin').disabled=false;
-    $('spinMsg').textContent='연결이 원활하지 않아요. 잠시 후 다시 돌려 주세요.';
+    console.warn('룰렛 요청 실패: '+error.message);
+    $('spinMsg').textContent=['not_configured','table_not_initialized','identity_mismatch','invalid_inventory','invalid_coupon'].indexOf(error.message)>=0?'행사 추첨 저장소 설정을 확인해야 합니다. 스태프에게 문의해 주세요.':
+      error.message==='invalid_input'?'참가 정보를 확인해 주세요. 새로 고침 후 다시 입력해 주세요.':
+      '추첨 결과를 확인하지 못했습니다. 다시 눌러 주세요. 같은 번호는 기존 쿠폰을 반환합니다.';
   });
 });
 function showCoupon(c,celebrate){
@@ -453,8 +469,9 @@ function showCoupon(c,celebrate){
   $('cpEmoji').textContent=p.emoji;$('cpPrize').textContent=p.name+' 당첨!';
   $('cpHello').textContent=c.duplicate?'이미 참여하셨어요. 받으신 쿠폰입니다.':'축하합니다! 🎉';
   $('cpCode').textContent=c.code;
-  $('cpMeta').textContent=c.fullName+' ('+c.nickname+') · '+c.company+' · '+c.wonAt;
-  $('cpMail').textContent=c.mailed?('쿠폰을 '+c.email+'(으)로도 보내 드렸어요.'):'메일 발송이 지연될 수 있어요. 이 화면을 캡처해 두세요.';
+  $('cpMeta').textContent=c.nickname+' · '+c.company+' · '+new Date(c.wonAt).toLocaleString('ko-KR');
+  $('cpMail').textContent=c.mailed?'쿠폰 메일도 발송되었습니다.':'메일은 발송되지 않았습니다. 이 화면을 캡처해 두세요.';
+  if(c.saved===false)$('cpMail').textContent+=' 기기에 쿠폰을 저장할 수 없어 화면 캡처가 필요합니다.';
   $('btnMine').hidden=false;
   show('s-coupon');if(celebrate){confetti();vibrate([30,60,30,60,120]);}
 }

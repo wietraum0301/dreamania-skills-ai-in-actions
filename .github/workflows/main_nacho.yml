@@ -28,12 +28,15 @@ jobs:
           node-version: '24.x'
 
       - name: Test homepage server
-        run: npm test
+        run: |
+          npm ci
+          npm test
 
       - name: Prepare deployment package
         run: |
           mkdir deploy
-          cp index.html server.js package.json deploy/
+          cp index.html server.js roulette.js table-store.js package.json package-lock.json deploy/
+          npm ci --omit=dev --prefix deploy
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
@@ -54,6 +57,11 @@ jobs:
         with:
           name: web-app
           path: deploy
+
+      - name: Set up Node.js for storage initialization
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
 
       - name: Login to Azure
         uses: azure/login@v2
@@ -76,6 +84,48 @@ jobs:
           fi
           az webapp config set --name nacho --resource-group "$resource_group" \
             --linux-fx-version 'NODE|24-lts' --startup-file 'npm start' --output none
+          echo "AZURE_RESOURCE_GROUP=$resource_group" >> "$GITHUB_ENV"
+
+      - name: Provision and connect production Table Storage
+        run: |
+          export AZURE_STORAGE_CONNECTION_STRING
+          export ROULETTE_IDENTITY_SECRET
+          AZURE_STORAGE_CONNECTION_STRING=$(az webapp config appsettings list \
+            --name nacho --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[?name=='AZURE_STORAGE_CONNECTION_STRING'].value | [0]" --output tsv)
+          ROULETTE_IDENTITY_SECRET=$(az webapp config appsettings list \
+            --name nacho --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[?name=='ROULETTE_IDENTITY_SECRET'].value | [0]" --output tsv)
+          if [ -z "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+            app_id=$(az webapp show --name nacho --resource-group "$AZURE_RESOURCE_GROUP" --query id --output tsv)
+            location=$(az webapp show --name nacho --resource-group "$AZURE_RESOURCE_GROUP" --query location --output tsv)
+            account="gstar$(printf '%s' "$app_id" | sha256sum | cut -c1-18)"
+            exists=$(az storage account list --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "[?name=='$account'].name | [0]" --output tsv)
+            if [ -z "$exists" ]; then
+              az storage account create --name "$account" --resource-group "$AZURE_RESOURCE_GROUP" \
+                --location "$location" --kind StorageV2 --sku Standard_LRS \
+                --https-only true --min-tls-version TLS1_2 --allow-blob-public-access false --output none
+            fi
+            AZURE_STORAGE_CONNECTION_STRING=$(az storage account show-connection-string \
+              --name "$account" --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query connectionString --output tsv)
+          fi
+          echo "::add-mask::$AZURE_STORAGE_CONNECTION_STRING"
+          if [ -z "$ROULETTE_IDENTITY_SECRET" ]; then
+            ROULETTE_IDENTITY_SECRET=$(openssl rand -hex 32)
+          fi
+          echo "::add-mask::$ROULETTE_IDENTITY_SECRET"
+          settings=$(mktemp)
+          trap 'rm -f "$settings"' EXIT
+          jq -n '[
+            {name:"AZURE_STORAGE_CONNECTION_STRING",value:env.AZURE_STORAGE_CONNECTION_STRING},
+            {name:"ROULETTE_IDENTITY_SECRET",value:env.ROULETTE_IDENTITY_SECRET}
+          ]' > "$settings"
+          az webapp config appsettings set --name nacho --resource-group "$AZURE_RESOURCE_GROUP" \
+            --settings "@$settings" --output none
+          cd deploy
+          npm run setup:table
 
       - name: Deploy to Azure Web App
         id: deploy
@@ -97,8 +147,11 @@ jobs:
           fi
           for attempt in {1..18}; do
             if curl --fail --silent --show-error --max-time 15 "$WEBAPP_URL" --output homepage.html &&
-              cmp --silent deploy/index.html homepage.html; then
-              echo "Deployed homepage matches index.html."
+              cmp --silent deploy/index.html homepage.html &&
+              curl --fail --silent --show-error --max-time 15 \
+                "${WEBAPP_URL%/}/api/roulette/status" --output readiness.json &&
+              jq --exit-status '.ready == true' readiness.json > /dev/null; then
+              echo "Deployed homepage matches index.html and production Table Storage is ready."
               exit 0
             fi
             sleep 5
