@@ -62,10 +62,46 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_BFA5BCDE28C44F6981EA40EC4681F30E }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_C03E7724126C4166BE5195CECA09C4BE }}
 
+      - name: Configure Linux runtime and startup command
+        run: |
+          resource_group=$(az webapp list --query "[?name=='nacho'].resourceGroup | [0]" --output tsv)
+          if [ -z "$resource_group" ]; then
+            echo "::error::Azure Web App nacho was not found in the configured subscription."
+            exit 1
+          fi
+          is_linux=$(az webapp show --name nacho --resource-group "$resource_group" --query reserved --output tsv)
+          if [ "$is_linux" != "true" ]; then
+            echo "::error::Azure Web App nacho must be a Linux app."
+            exit 1
+          fi
+          az webapp config set --name nacho --resource-group "$resource_group" \
+            --linux-fx-version 'NODE|24-lts' --startup-file 'npm start' --output none
+
       - name: Deploy to Azure Web App
+        id: deploy
         uses: azure/webapps-deploy@v3
         with:
           app-name: nacho
           slot-name: Production
           package: deploy
           startup-command: 'npm start'
+
+      - name: Verify deployed homepage
+        timeout-minutes: 5
+        env:
+          WEBAPP_URL: ${{ steps.deploy.outputs.webapp-url }}
+        run: |
+          if [ -z "$WEBAPP_URL" ]; then
+            echo "::error::Deployment did not return the Web App URL."
+            exit 1
+          fi
+          for attempt in {1..18}; do
+            if curl --fail --silent --show-error --max-time 15 "$WEBAPP_URL" --output homepage.html &&
+              cmp --silent deploy/index.html homepage.html; then
+              echo "Deployed homepage matches index.html."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::The deployed homepage did not match index.html."
+          exit 1
