@@ -14,8 +14,10 @@ Node.js 서버로 제공합니다.
    배포 및 시작 명령 변경 권한이 있어야 합니다.
 3. 변경 사항을 `main`에 병합하면 GitHub Actions가 서버를 확인한 후 `nacho`의
    `Production` 슬롯에 배포합니다. **Actions > Deploy homepage to Azure Web App - nacho >
-   Run workflow**로 수동 배포할 수도 있습니다. PR에서는 확인 작업만 수행합니다.
+   Run workflow**에서 `main`을 선택해 수동 배포할 수도 있습니다.
+   PR과 다른 브랜치에서는 확인 작업만 수행합니다.
    워크플로도 시작 명령을 `npm start`로 설정하며, 런타임은 Portal에서 설정한 값을 사용합니다.
+   배포는 `main_nacho.yml` 하나로 통합되어 동일 앱에 대한 중복 배포를 방지합니다.
 4. 배포가 성공하면 Azure Portal의 `nacho` **기본 도메인**을 열어 메인 화면을 확인합니다.
 
 로컬 실행은 Node.js 24 LTS에서 `npm start`, 서버 확인은 `npm test`를 사용합니다.
