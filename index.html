@@ -459,7 +459,7 @@ tap($('btnSpin'),function(){
   }).catch(function(error){
     spinning=false;$('btnSpin').disabled=false;
     console.warn('룰렛 요청 실패: '+error.message);
-    $('spinMsg').textContent=error.message==='not_configured'?'행사 추첨 서버가 아직 설정되지 않았습니다. 스태프에게 문의해 주세요.':
+    $('spinMsg').textContent=['not_configured','table_not_initialized','identity_mismatch','invalid_inventory','invalid_coupon'].indexOf(error.message)>=0?'행사 추첨 저장소 설정을 확인해야 합니다. 스태프에게 문의해 주세요.':
       error.message==='invalid_input'?'참가 정보를 확인해 주세요. 새로 고침 후 다시 입력해 주세요.':
       '추첨 결과를 확인하지 못했습니다. 다시 눌러 주세요. 같은 번호는 기존 쿠폰을 반환합니다.';
   });

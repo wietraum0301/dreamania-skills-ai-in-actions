@@ -1,6 +1,4 @@
-const { createHmac } = require('node:crypto');
-
-const prizeKeys = ['beer5', 'nachos', 'quesa', 'beer1'];
+const store = require('./table-store');
 
 function reply(response, status, body) {
   response.writeHead(status, {
@@ -51,79 +49,22 @@ async function draw(request, response) {
     return;
   }
 
-  let url;
   try {
-    url = new URL(process.env.ROULETTE_API_URL);
-  } catch {
-    console.error('Roulette backend URL is not configured correctly.');
-    reply(response, 503, { error: 'not_configured' });
-    return;
-  }
-  const secret = process.env.ROULETTE_IDENTITY_SECRET;
-  if (url.protocol !== 'https:' || !secret || Buffer.byteLength(secret) < 32) {
-    console.error('Roulette requires an HTTPS backend and an identity secret of at least 32 bytes.');
-    reply(response, 503, { error: 'not_configured' });
-    return;
-  }
-
-  let upstream;
-  try {
-    upstream = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      redirect: 'error',
-      signal: AbortSignal.timeout(25000),
-      body: JSON.stringify({
-        fullName: input.fullName.trim(),
-        nickname: input.nickname.trim(),
-        company: input.company.trim(),
-        phone,
-        phoneLast4: phone.slice(-4),
-        email: input.email.trim(),
-        jobRole: input.jobRole,
-        consent: true,
-        score: input.score,
-        bugs: input.bugs,
-        participantId: createHmac('sha256', secret).update(phone).digest('hex')
-      })
-    });
+    const result = await store.award(store.getClient(), {
+      fullName: input.fullName.trim(), nickname: input.nickname.trim(),
+      company: input.company.trim(), phone, email: input.email.trim(),
+      jobRole: input.jobRole, consent: true, score: input.score, bugs: input.bugs
+    }, store.getSecret());
+    reply(response, 200, result);
   } catch (error) {
-    console.error(`Roulette backend request failed (${error.name}).`);
-    reply(response, 502, { error: 'upstream_unavailable' });
-    return;
+    const expected = error instanceof store.RouletteError;
+    if (!expected || error.code !== 'sold_out') {
+      console.error(`Roulette table operation failed (${expected ? error.code : error.name}).`);
+    }
+    reply(response, expected ? error.status : 503, {
+      error: expected ? error.code : 'storage_failed'
+    });
   }
-
-  let result;
-  try {
-    result = await upstream.json();
-  } catch {
-    console.error('Roulette backend returned invalid JSON.');
-    reply(response, 502, { error: 'invalid_upstream_response' });
-    return;
-  }
-  if (upstream.status === 409 && result?.error === 'sold_out') {
-    reply(response, 409, { error: 'sold_out' });
-    return;
-  }
-  if (!upstream.ok || !result || !['awarded', 'duplicate'].includes(result.status) ||
-    !prizeKeys.includes(result.prizeKey) ||
-    typeof result.code !== 'string' || !/^[A-Za-z0-9-]{8,80}$/.test(result.code) ||
-    typeof result.wonAt !== 'string' || !Number.isFinite(Date.parse(result.wonAt)) ||
-    typeof result.nickname !== 'string' || !result.nickname || result.nickname.length > 20 ||
-    typeof result.company !== 'string' || !result.company || result.company.length > 40) {
-    console.error(`Roulette backend returned an invalid award response (HTTP ${upstream.status}).`);
-    reply(response, 502, { error: 'invalid_upstream_response' });
-    return;
-  }
-  reply(response, 200, {
-    status: result.status,
-    prizeKey: result.prizeKey,
-    code: result.code,
-    wonAt: result.wonAt,
-    nickname: result.nickname,
-    company: result.company,
-    mailed: result.mailed === true
-  });
 }
 
 module.exports = draw;

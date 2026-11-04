@@ -28,12 +28,15 @@ jobs:
           node-version: '24.x'
 
       - name: Test homepage server
-        run: npm test
+        run: |
+          npm ci
+          npm test
 
       - name: Prepare deployment package
         run: |
           mkdir deploy
-          cp index.html server.js roulette.js package.json deploy/
+          cp index.html server.js roulette.js table-store.js package.json package-lock.json deploy/
+          npm ci --omit=dev --prefix deploy
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4

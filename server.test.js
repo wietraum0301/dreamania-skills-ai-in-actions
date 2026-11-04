@@ -3,8 +3,7 @@ const { readFileSync } = require('node:fs');
 const { once } = require('node:events');
 const { before, after, test } = require('node:test');
 const server = require('./server');
-const realFetch = global.fetch;
-const { createHmac } = require('node:crypto');
+const store = require('./table-store');
 
 let baseUrl;
 const homepage = readFileSync(`${__dirname}/index.html`, 'utf8');
@@ -20,7 +19,7 @@ after(() => new Promise((resolve, reject) => {
 }));
 
 for (const route of ['/', '/index.html', '/?source=azure']) {
-  test(`${route} serves the unchanged homepage`, async () => {
+  test(`${route} serves the homepage`, async () => {
     const response = await fetch(`${baseUrl}${route}`);
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');
@@ -35,7 +34,8 @@ test('HEAD returns homepage headers without a body', async () => {
   assert.equal(await response.text(), '');
 });
 
-for (const route of ['/missing', '/server.js', '/package.json', '/.git/config', '/%2e%2e/README.md']) {
+for (const route of ['/missing', '/server.js', '/table-store.js', '/roulette.js',
+  '/package.json', '/.git/config', '/%2e%2e/README.md']) {
   test(`${route} is not served`, async () => {
     const response = await fetch(`${baseUrl}${route}`);
     assert.equal(response.status, 404);
@@ -43,7 +43,7 @@ for (const route of ['/missing', '/server.js', '/package.json', '/.git/config', 
   });
 }
 
-test('unsupported methods return 405', async () => {
+test('unsupported homepage methods return 405', async () => {
   const response = await fetch(baseUrl, { method: 'POST' });
   assert.equal(response.status, 405);
   assert.equal(response.headers.get('allow'), 'GET, HEAD');
@@ -60,80 +60,42 @@ const award = {
   wonAt: '2026-11-04T03:00:00Z', mailed: false
 };
 
-function configureBackend(t, handler) {
-  const originalUrl = process.env.ROULETTE_API_URL;
-  const originalSecret = process.env.ROULETTE_IDENTITY_SECRET;
-  process.env.ROULETTE_API_URL = 'https://example.com/flow?sig=test';
-  process.env.ROULETTE_IDENTITY_SECRET = 'a'.repeat(32);
-  t.after(() => {
-    if (originalUrl === undefined) delete process.env.ROULETTE_API_URL;
-    else process.env.ROULETTE_API_URL = originalUrl;
-    if (originalSecret === undefined) delete process.env.ROULETTE_IDENTITY_SECRET;
-    else process.env.ROULETTE_IDENTITY_SECRET = originalSecret;
-  });
-  t.mock.method(global, 'fetch', handler);
+function configureStore(t, handler) {
+  t.mock.method(store, 'getClient', () => ({}));
+  t.mock.method(store, 'getSecret', () => 'a'.repeat(32));
+  t.mock.method(store, 'award', handler);
 }
 
 function postDraw(input = participant) {
-  return realFetch(`${baseUrl}/api/roulette`, {
+  return fetch(`${baseUrl}/api/roulette`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input)
   });
 }
 
-test('roulette forwards normalized full phone and HMAC ID only to backend', async (t) => {
-  let forwarded;
-  configureBackend(t, async (url, options) => {
-    assert.equal(url.protocol, 'https:');
-    assert.equal(options.redirect, 'error');
-    forwarded = JSON.parse(options.body);
-    return Response.json(award);
+test('roulette passes normalized participant to Table store without exposing phone', async (t) => {
+  let stored;
+  configureStore(t, async (client, input, secret) => {
+    stored = input;
+    assert.equal(secret, 'a'.repeat(32));
+    return award;
   });
   const response = await postDraw();
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.equal(forwarded.phone, '01000000000');
-  assert.equal(forwarded.phoneLast4, '0000');
-  assert.equal(forwarded.participantId, createHmac('sha256', 'a'.repeat(32)).update('01000000000').digest('hex'));
-  const result = await response.json();
-  assert.deepEqual(result, award);
-  assert.equal(result.phone, undefined);
-  assert.equal(result.participantId, undefined);
+  assert.equal(stored.phone, '01000000000');
+  assert.equal(stored.consent, true);
+  assert.deepEqual(await response.json(), award);
 });
 
-test('retry sends the same identity and preserves original duplicate coupon', async (t) => {
-  const ids = [];
-  configureBackend(t, async (url, options) => {
-    ids.push(JSON.parse(options.body).participantId);
-    return Response.json({ ...award, status: 'duplicate' });
-  });
-  const first = await (await postDraw()).json();
-  const second = await (await postDraw({ ...participant, nickname: 'Changed' })).json();
-  assert.deepEqual(first, second);
-  assert.equal(first.nickname, 'Original');
-  assert.equal(ids[0], ids[1]);
+test('duplicate coupon is returned unchanged', async (t) => {
+  configureStore(t, async () => ({ ...award, status: 'duplicate' }));
+  const response = await postDraw({ ...participant, nickname: 'Changed' });
+  assert.deepEqual(await response.json(), { ...award, status: 'duplicate' });
 });
 
-test('different numbers with identical last four have different identities', async (t) => {
-  const ids = [];
-  configureBackend(t, async (url, options) => {
-    ids.push(JSON.parse(options.body).participantId);
-    return Response.json(award);
-  });
-  await postDraw();
-  await postDraw({ ...participant, phone: '010-1111-0000' });
-  assert.notEqual(ids[0], ids[1]);
-});
-
-test('sold out is preserved as 409, never a coupon', async (t) => {
-  configureBackend(t, async () => Response.json({ error: 'sold_out' }, { status: 409 }));
-  const response = await postDraw();
-  assert.equal(response.status, 409);
-  assert.deepEqual(await response.json(), { error: 'sold_out' });
-});
-
-test('invalid inputs do not reach backend', async (t) => {
-  configureBackend(t, () => assert.fail('Backend must not be called'));
+test('invalid inputs do not reach storage', async (t) => {
+  configureStore(t, () => assert.fail('Storage must not be called'));
   for (const input of [null, {}, { ...participant, consent: false },
     { ...participant, phone: '0000' }, { ...participant, score: -1 },
     { ...participant, bugs: 1.5 }, { ...participant, nickname: 'x'.repeat(21) }]) {
@@ -141,59 +103,36 @@ test('invalid inputs do not reach backend', async (t) => {
   }
 });
 
-test('missing configuration returns explicit 503', async (t) => {
-  configureBackend(t, () => assert.fail('Backend must not be called'));
-  delete process.env.ROULETTE_API_URL;
+for (const [code, status] of [
+  ['sold_out', 409], ['not_configured', 503], ['table_not_initialized', 503],
+  ['identity_mismatch', 503], ['storage_busy', 503], ['invalid_inventory', 503]
+]) {
+  test(`${code} returns an explicit error, never a coupon`, async (t) => {
+    configureStore(t, async () => { throw new store.RouletteError(code, status); });
+    const response = await postDraw();
+    assert.equal(response.status, status);
+    assert.deepEqual(await response.json(), { error: code });
+  });
+}
+
+test('unexpected storage errors are retryable and do not expose secrets', async (t) => {
+  configureStore(t, async () => { throw new Error('private connection string'); });
   const response = await postDraw();
   assert.equal(response.status, 503);
-  assert.deepEqual(await response.json(), { error: 'not_configured' });
+  assert.deepEqual(await response.json(), { error: 'storage_failed' });
 });
 
-test('unsafe URL and short identity secret are rejected', async (t) => {
-  configureBackend(t, () => assert.fail('Backend must not be called'));
-  process.env.ROULETTE_API_URL = 'http://example.com/flow';
-  assert.equal((await postDraw()).status, 503);
-  process.env.ROULETTE_API_URL = 'https://example.com/flow';
-  process.env.ROULETTE_IDENTITY_SECRET = 'short';
-  assert.equal((await postDraw()).status, 503);
-});
-
-test('malformed backend results and failures do not award coupons', async (t) => {
-  const results = [
-    Response.json({ ...award, prizeKey: 'constructor' }),
-    Response.json({ ...award, code: '<script>' }),
-    Response.json({ ...award, wonAt: 'invalid' }),
-    Response.json({ ...award, status: 'unknown' }),
-    Response.json({ ...award, nickname: null }),
-    Response.json(award, { status: 500 }),
-    new Response('not JSON')
-  ];
-  configureBackend(t, async () => results.shift());
-  for (let i = 0; i < 7; i++) {
-    const response = await postDraw();
-    assert.equal(response.status, 502);
-    assert.deepEqual(await response.json(), { error: 'invalid_upstream_response' });
-  }
-});
-
-test('backend timeout or network failure returns a retryable error', async (t) => {
-  configureBackend(t, async () => { throw new DOMException('timeout', 'TimeoutError'); });
-  const response = await postDraw();
-  assert.equal(response.status, 502);
-  assert.deepEqual(await response.json(), { error: 'upstream_unavailable' });
-});
-
-test('roulette rejects malformed JSON and unsupported content type', async () => {
-  const malformed = await realFetch(`${baseUrl}/api/roulette`, {
+test('roulette rejects malformed JSON, oversized payloads, content types and methods', async () => {
+  const malformed = await fetch(`${baseUrl}/api/roulette`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{'
   });
   assert.equal(malformed.status, 400);
-  const unsupported = await realFetch(`${baseUrl}/api/roulette`, { method: 'POST', body: '{}' });
+  const unsupported = await fetch(`${baseUrl}/api/roulette`, { method: 'POST', body: '{}' });
   assert.equal(unsupported.status, 415);
-  const method = await realFetch(`${baseUrl}/api/roulette`);
+  const method = await fetch(`${baseUrl}/api/roulette`);
   assert.equal(method.status, 405);
   assert.equal(method.headers.get('allow'), 'POST');
-  const oversized = await realFetch(`${baseUrl}/api/roulette`, {
+  const oversized = await fetch(`${baseUrl}/api/roulette`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: 'x'.repeat(5000)
   });
   assert.equal(oversized.status, 413);

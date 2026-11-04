@@ -7,6 +7,10 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "setup:table": "node table-store.js"
+  },
+  "dependencies": {
+    "@azure/data-tables": "^13.3.2"
   }
 }
