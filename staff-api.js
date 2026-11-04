@@ -1,5 +1,6 @@
 const { createHash, createHmac, randomBytes, timingSafeEqual } = require('node:crypto');
 const store = require('./table-store');
+const { normalizeCode } = require('./coupon-code');
 
 const COOKIE = 'gstar_staff';
 const SESSION_SECONDS = 8 * 60 * 60;
@@ -115,8 +116,7 @@ async function handle(request, response, pathname) {
     return;
   }
   const input = await readInput(request);
-  const code = typeof input?.code === 'string' ?
-    input.code.trim().toLowerCase().replace(/^gs-/, 'GS-') : input?.code;
+  const code = normalizeCode(input?.code);
   const coupon = await (pathname === '/api/staff/redeem' ? store.redeemCoupon : store.verifyCoupon)(
     store.getClient(), code);
   reply(response, 200, { coupon });

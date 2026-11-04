@@ -35,7 +35,7 @@ jobs:
       - name: Prepare deployment package
         run: |
           mkdir deploy
-          cp index.html staff.html server.js roulette.js staff-api.js table-store.js package.json package-lock.json deploy/
+          cp index.html staff.html server.js roulette.js staff-api.js table-store.js coupon-code.js package.json package-lock.json deploy/
           npm ci --omit=dev --prefix deploy
 
       - name: Upload deployment artifact

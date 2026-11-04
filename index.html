@@ -193,7 +193,7 @@ input[aria-invalid="true"]{border-color:var(--hot)}
       <div class="big" id="cpEmoji" aria-hidden="true">🍺</div>
       <p style="margin-block-start:8px" id="cpHello">축하합니다! 🎉</p>
       <h2 id="cpPrize">맥주 1잔</h2>
-      <div class="code" id="cpCode">GS-00000</div>
+      <div class="code" id="cpCode">--------</div>
       <div class="meta" id="cpMeta"></div>
     </div>
     <div class="card">
@@ -260,7 +260,7 @@ function loadMine(){
   try{
     var c=JSON.parse(localStorage.getItem(KEY));
     return c&&Object.prototype.hasOwnProperty.call(PRIZES,c.prizeKey)&&
-      typeof c.code==='string'&&/^[A-Za-z0-9-]{8,80}$/.test(c.code)&&
+      typeof c.code==='string'&&/^(?:[A-Z0-9]{8}|GS-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/.test(c.code)&&
       typeof c.nickname==='string'&&typeof c.company==='string'&&
       typeof c.wonAt==='string'&&Number.isFinite(Date.parse(c.wonAt))?c:null;
   }catch(e){console.warn('쿠폰 저장 정보를 읽을 수 없습니다.');return null;}

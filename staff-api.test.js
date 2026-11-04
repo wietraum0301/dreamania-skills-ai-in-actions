@@ -153,6 +153,20 @@ test('storage errors and conflicts are explicit and do not expose private detail
   }
 });
 
+test('eight-character staff codes accept lowercase entry and preserve uppercase identifiers', async (t) => {
+  t.mock.method(store, 'getClient', () => ({}));
+  t.mock.method(store, 'verifyCoupon', async (client, code) => {
+    assert.equal(code, 'K7M2P9Q4');
+    return { ...coupon, code };
+  });
+  t.mock.method(store, 'redeemCoupon', async (client, code) => {
+    assert.equal(code, 'K7M2P9Q4');
+    return { ...coupon, code, redeemed: true };
+  });
+  assert.equal((await (await post('verify', { code: ' k7m2p9q4 ' })).json()).coupon.code, 'K7M2P9Q4');
+  assert.equal((await (await post('redeem', { code: 'k7m2p9q4' })).json()).coupon.redeemed, true);
+});
+
 test('staff API rejects cross-origin browser submissions, unsupported methods and bad bodies', async () => {
   assert.equal((await post('redeem', { code: coupon.code }, cookie,
     { 'X-Staff-Request': '' })).status, 403);

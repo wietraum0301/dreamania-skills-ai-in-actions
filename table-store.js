@@ -1,5 +1,6 @@
 const { TableClient } = require('@azure/data-tables');
-const { createHmac, randomInt, randomUUID } = require('node:crypto');
+const { createHmac, randomInt } = require('node:crypto');
+const codes = require('./coupon-code');
 const { setTimeout: delay } = require('node:timers/promises');
 
 const PARTITION = 'GSTAR2026';
@@ -64,7 +65,7 @@ function validateInventory(inventory, secret) {
 
 function publicCoupon(winner, status) {
   if (!Object.hasOwn(STOCK, winner.prizeKey) ||
-    typeof winner.couponCode !== 'string' || !/^GS-[a-f0-9-]{36}$/.test(winner.couponCode) ||
+    !codes.validCode(winner.couponCode) ||
     typeof winner.wonAt !== 'string' || !Number.isFinite(Date.parse(winner.wonAt)) ||
     typeof winner.nickname !== 'string' || !winner.nickname || winner.nickname.length > 20 ||
     typeof winner.company !== 'string' || !winner.company || winner.company.length > 40) {
@@ -96,12 +97,12 @@ async function award(client, participant, secret) {
     const winner = {
       partitionKey: PARTITION, rowKey, kind: 'winner',
       ...participant, participantId, phoneLast4: participant.phone.slice(-4),
-      couponCode: `GS-${randomUUID()}`, prizeKey, prizeName: NAMES[prizeKey],
+      couponCode: codes.generateCode(), prizeKey, prizeName: NAMES[prizeKey],
       redeemed: false, wonAt: new Date().toISOString()
     };
 
     try {
-      // Both rows share a partition: stock and coupon commit together or not at all.
+      // Reserve the short code atomically with stock and winner to prevent collisions.
       await client.submitTransaction([
         ['update', {
           partitionKey: PARTITION, rowKey: 'inventory', kind: 'inventory',
@@ -110,7 +111,11 @@ async function award(client, participant, secret) {
             [key, inventory[key] - (key === prizeKey ? 1 : 0)])),
           awarded: inventory.awarded + 1
         }, 'Replace', { etag: inventory.etag }],
-        ['create', winner]
+        ['create', winner],
+        ['create', {
+          partitionKey: PARTITION, rowKey: `coupon-${winner.couponCode}`,
+          kind: 'coupon-code', winnerRowKey: rowKey
+        }]
       ], { requestOptions: { timeout: 3000 } });
       return publicCoupon(winner, 'awarded');
     } catch (error) {
@@ -166,8 +171,7 @@ function staffCoupon(winner) {
 }
 
 async function findCoupon(client, code) {
-  if (typeof code !== 'string' ||
-    !/^GS-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(code)) {
+  if (!codes.validCode(code)) {
     throw new RouletteError('invalid_code', 400);
   }
   let winner;

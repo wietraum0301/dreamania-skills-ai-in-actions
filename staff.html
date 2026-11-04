@@ -40,7 +40,7 @@ button[disabled]{opacity:.45;cursor:not-allowed}
   <div id="staffPanel" hidden>
     <form id="lookupForm" class="card">
       <label for="code">쿠폰 코드</label>
-      <input id="code" type="text" placeholder="GS-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="80" required>
+      <input id="code" type="text" placeholder="K7M2P9Q4 (기존 GS-쿠폰도 조회 가능)" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="39" required>
       <button id="lookup">실시간 조회</button>
     </form>
     <section id="result" class="card" hidden aria-labelledby="prize">
@@ -64,7 +64,7 @@ var messages={
   unauthorized:'로그인이 만료되었습니다. 다시 로그인해 주세요.',
   staff_not_configured:'Azure의 ROULETTE_STAFF_PASSWORD 설정을 확인해 주세요.',
   too_many_attempts:'로그인 시도가 많습니다. 1분 후 다시 시도해 주세요.',
-  invalid_code:'GS-로 시작하는 전체 쿠폰 코드를 입력해 주세요.',
+  invalid_code:'영문·숫자 8자리 또는 기존 GS-쿠폰 전체 코드를 입력해 주세요.',
   coupon_not_found:'실제 발급 기록이 없는 쿠폰입니다. 코드를 확인해 주세요.',
   already_redeemed:'이미 수령 확정된 쿠폰입니다. 경품을 다시 전달하지 마세요.',
   coupon_changed:'다른 스태프가 기록을 변경했습니다. 다시 조회해 주세요.',
@@ -73,7 +73,10 @@ var messages={
   not_configured:'Azure Storage 연결 설정을 확인해 주세요.'
 };
 function $(id){return document.getElementById(id);}
-function normalizedCode(){return $('code').value.trim().toLowerCase().replace(/^gs-/,'GS-');}
+function normalizedCode(){
+  var value=$('code').value.trim();
+  return /^gs-/i.test(value)?value.toLowerCase().replace(/^gs-/,'GS-'):value.toUpperCase();
+}
 function clearResult(){selectedCode=null;$('result').hidden=true;$('redeem').disabled=true;}
 function loggedIn(value){
   $('loginForm').hidden=value;$('staffPanel').hidden=!value;

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { createHmac, randomUUID } = require('node:crypto');
 const { TableClient } = require('@azure/data-tables');
+const codes = require('./coupon-code');
 const {
   award, initialize, getClient, getSecret, verifyCoupon, redeemCoupon, PARTITION, STOCK
 } = require('./table-store');
@@ -45,17 +46,23 @@ class MemoryTable {
     this.rows.delete(rowKey);
   }
   async submitTransaction(actions) {
-    const [update, create] = actions;
+    const [update, ...creates] = actions;
     assert.equal(update[0], 'update');
     assert.equal(update[2], 'Replace');
-    assert.equal(create[0], 'create');
-    assert.equal(update[1].partitionKey, create[1].partitionKey);
+    for (const create of creates) {
+      assert.equal(create[0], 'create');
+      assert.equal(update[1].partitionKey, create[1].partitionKey);
+    }
     const current = this.rows.get(update[1].rowKey);
     if (!current) throw serviceError(404);
     if (current.etag !== update[3].etag) throw serviceError(412);
-    if (this.rows.has(create[1].rowKey)) throw serviceError(409);
+    for (const create of creates) {
+      if (this.rows.has(create[1].rowKey)) throw serviceError(409);
+    }
     this.rows.set(update[1].rowKey, { ...update[1], etag: randomUUID() });
-    this.rows.set(create[1].rowKey, { ...create[1], etag: randomUUID() });
+    for (const create of creates) {
+      this.rows.set(create[1].rowKey, { ...create[1], etag: randomUUID() });
+    }
   }
 }
 
@@ -118,7 +125,7 @@ test('simultaneous same-number requests create one coupon and decrement stock on
   assert.equal(new Set(responses.map((result) => result.code)).size, 1);
   assert.equal(responses.filter((result) => result.status === 'awarded').length, 1);
   assert.equal((await client.getEntity(PARTITION, 'inventory')).awarded, 1);
-  assert.equal((await rows(client)).length, 2);
+  assert.equal((await rows(client)).length, 3);
   const retry = await award(client, { ...participant, nickname: 'Changed' }, secret);
   assert.equal(retry.nickname, participant.nickname);
   assert.equal(retry.status, 'duplicate');
@@ -140,25 +147,29 @@ test('concurrent distinct participants preserve stock and all committed coupons'
   const inventory = await client.getEntity(PARTITION, 'inventory');
   assert.equal(inventory.awarded, 8);
   assert.equal(Object.keys(STOCK).reduce((sum, key) => sum + inventory[key], 0), 492);
-  assert.equal((await rows(client)).length, 9);
+  assert.equal((await rows(client)).length, 17);
 });
 
 test('500 awards exhaust exact quotas; 501st is rejected and duplicates still restore', async (t) => {
   const client = await makeTable(t);
   const counts = Object.fromEntries(Object.keys(STOCK).map((key) => [key, 0]));
   let first;
+  const issuedCodes = new Set();
   for (let i = 0; i < 500; i++) {
     const result = await award(client, { ...participant, phone: `010${String(i).padStart(8, '0')}` }, secret);
     first ??= result;
+    assert.match(result.code, /^[A-Z0-9]{8}$/);
+    issuedCodes.add(result.code);
     counts[result.prizeKey]++;
   }
   assert.deepEqual(counts, STOCK);
+  assert.equal(issuedCodes.size, 500);
   await assert.rejects(award(client, { ...participant, phone: '01099999999' }, secret),
     { code: 'sold_out', status: 409 });
   const duplicate = await award(client, participant, secret);
   assert.equal(duplicate.code, first.code);
   assert.equal(duplicate.status, 'duplicate');
-  assert.equal((await rows(client)).length, 501);
+  assert.equal((await rows(client)).length, 1001);
 });
 
 test('redeemed coupons still count against stock and never create a new award', async (t) => {
@@ -353,4 +364,36 @@ test('legacy redeemed records without a timestamp still block reuse', async (t) 
     'Merge', { etag: winner.etag });
   assert.equal((await verifyCoupon(client, coupon.code)).redeemedAt, null);
   await assert.rejects(redeemCoupon(client, coupon.code), { code: 'already_redeemed' });
+});
+
+test('short code collisions retry atomically without consuming extra inventory', async (t) => {
+  const client = await makeTable(t);
+  const firstCode = 'K7M2P9Q4', nextCode = 'A1B2C3D4';
+  let calls = 0;
+  t.mock.method(codes, 'generateCode', () => ++calls <= 2 ? firstCode : nextCode);
+  const first = await award(client, participant, secret);
+  const second = await award(client, { ...participant, phone: '01011112222' }, secret);
+  assert.equal(first.code, firstCode);
+  assert.equal(second.code, nextCode);
+  assert.equal(calls, 3);
+  assert.equal((await client.getEntity(PARTITION, 'inventory')).awarded, 2);
+  assert.equal((await rows(client)).length, 5);
+  assert.equal((await verifyCoupon(client, firstCode)).nickname, participant.nickname);
+});
+
+test('legacy GS coupons restore and redeem unchanged alongside new short codes', async (t) => {
+  const client = await makeTable(t);
+  const first = await award(client, participant, secret);
+  const id = createHmac('sha256', secret).update(participant.phone).digest('hex');
+  const winner = await client.getEntity(PARTITION, `winner-${id}`);
+  const legacy = `GS-${randomUUID()}`;
+  await client.updateEntity({ partitionKey: PARTITION, rowKey: winner.rowKey, couponCode: legacy },
+    'Merge', { etag: winner.etag });
+  await client.deleteEntity(PARTITION, `coupon-${first.code}`);
+  assert.equal((await award(client, participant, secret)).code, legacy);
+  assert.equal((await verifyCoupon(client, legacy)).code, legacy);
+  assert.equal((await redeemCoupon(client, legacy)).redeemed, true);
+  const next = await award(client, { ...participant, phone: '01011112222' }, secret);
+  assert.match(next.code, /^[A-Z0-9]{8}$/);
+  assert.equal((await client.getEntity(PARTITION, 'inventory')).awarded, 2);
 });
