@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>GSTAR 쿠폰 현장 인증 · 스태프</title>
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;background:#0d1117;color:#f0f6fc}
+*{box-sizing:border-box}
+body{margin:0;padding:24px 16px}
+main{max-width:520px;margin:auto}
+h1{font-size:25px}h2{font-size:22px}
+p{line-height:1.6;color:#9aa4b2}
+.card{border:1px solid #30363d;border-radius:16px;background:#161b22;padding:20px;margin-top:16px}
+label{display:block;margin-bottom:8px}
+input,button{font:inherit;border-radius:10px;width:100%;padding:14px}
+input{background:#0d1117;border:1px solid #30363d;color:#f0f6fc}
+button{margin-top:12px;border:0;background:#7c3aed;color:white;font-weight:700;cursor:pointer}
+button.secondary{background:#30363d}
+button[disabled]{opacity:.45;cursor:not-allowed}
+:focus-visible{outline:3px solid #a78bfa;outline-offset:3px}
+[hidden]{display:none!important}
+#message{min-height:26px;color:#f2cc60;white-space:pre-wrap}
+#status{font-size:24px;font-weight:800;color:#3fb950}
+#status.used{color:#ff6b6b}
+#details{white-space:pre-wrap;overflow-wrap:anywhere}
+#checked{font-size:13px}
+</style>
+</head>
+<body>
+<main>
+  <h1>쿠폰 현장 인증 · 스태프</h1>
+  <p>Azure Table의 실제 발급·수령 상태를 조회합니다. 스크린샷만 보고 경품을 전달하지 마세요.</p>
+  <form id="loginForm" class="card">
+    <label for="password">스태프 비밀번호</label>
+    <input id="password" type="password" autocomplete="current-password" required maxlength="256">
+    <button id="login" disabled>로그인</button>
+  </form>
+  <div id="staffPanel" hidden>
+    <form id="lookupForm" class="card">
+      <label for="code">쿠폰 코드</label>
+      <input id="code" type="text" placeholder="GS-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="80" required>
+      <button id="lookup">실시간 조회</button>
+    </form>
+    <section id="result" class="card" hidden aria-labelledby="prize">
+      <h2 id="prize"></h2>
+      <div id="status" role="status"></div>
+      <p id="details"></p>
+      <p id="checked"></p>
+      <button id="redeem" type="button" disabled>수령 확정</button>
+      <p>수령 확정 성공을 확인한 뒤 경품을 전달하세요. 확정 후 취소할 수 없습니다.</p>
+    </section>
+    <button id="logout" type="button" class="secondary">로그아웃</button>
+  </div>
+  <p id="message" role="alert"></p>
+</main>
+<script>
+(function(){
+'use strict';
+var selectedCode=null,busy=false;
+var messages={
+  invalid_password:'비밀번호가 올바르지 않습니다.',
+  unauthorized:'로그인이 만료되었습니다. 다시 로그인해 주세요.',
+  staff_not_configured:'Azure의 ROULETTE_STAFF_PASSWORD 설정을 확인해 주세요.',
+  too_many_attempts:'로그인 시도가 많습니다. 1분 후 다시 시도해 주세요.',
+  invalid_code:'GS-로 시작하는 전체 쿠폰 코드를 입력해 주세요.',
+  coupon_not_found:'실제 발급 기록이 없는 쿠폰입니다. 코드를 확인해 주세요.',
+  already_redeemed:'이미 수령 확정된 쿠폰입니다. 경품을 다시 전달하지 마세요.',
+  coupon_changed:'다른 스태프가 기록을 변경했습니다. 다시 조회해 주세요.',
+  invalid_coupon:'쿠폰 저장 기록이 올바르지 않습니다. 운영자에게 문의해 주세요.',
+  storage_failed:'저장소에 연결할 수 없습니다. 경품을 전달하지 말고 다시 조회해 주세요.',
+  not_configured:'Azure Storage 연결 설정을 확인해 주세요.'
+};
+function $(id){return document.getElementById(id);}
+function normalizedCode(){return $('code').value.trim().toLowerCase().replace(/^gs-/,'GS-');}
+function clearResult(){selectedCode=null;$('result').hidden=true;$('redeem').disabled=true;}
+function loggedIn(value){
+  $('loginForm').hidden=value;$('staffPanel').hidden=!value;
+  if(!value)clearResult();
+}
+function display(coupon){
+  $('result').hidden=false;
+  $('prize').textContent=coupon.prizeName;
+  $('status').textContent=coupon.redeemed?'수령 완료 · 재사용 불가':'미사용 · 수령 가능';
+  $('status').classList.toggle('used',coupon.redeemed);
+  $('details').textContent=coupon.code+'\n닉네임: '+coupon.nickname+
+    '\n발급: '+new Date(coupon.wonAt).toLocaleString('ko-KR')+
+    (coupon.redeemed?'\n수령: '+(coupon.redeemedAt?new Date(coupon.redeemedAt).toLocaleString('ko-KR'):'기존 기록에 시각 없음'):'');
+  $('checked').textContent='마지막 실시간 확인: '+new Date().toLocaleTimeString('ko-KR')+' · 5초마다 갱신';
+  $('redeem').disabled=coupon.redeemed;
+}
+function failure(error){
+  $('redeem').disabled=true;
+  if(error.code==='unauthorized')loggedIn(false);
+  $('message').textContent=messages[error.code]||'요청 결과를 확인하지 못했습니다. 경품을 전달하지 말고 다시 조회해 주세요.';
+  $('checked').textContent='실시간 확인 실패 · 수령 확정 중지';
+}
+async function api(route,data){
+  var controller=new AbortController(),timer=setTimeout(function(){controller.abort();},10000);
+  try{
+    var response=await fetch('/api/staff/'+route,{
+      method:data===undefined?'GET':'POST',credentials:'same-origin',cache:'no-store',
+      headers:{'Content-Type':'application/json','X-Staff-Request':'1'},
+      body:data===undefined?undefined:JSON.stringify(data),signal:controller.signal
+    });
+    var body=await response.json();
+    if(!response.ok){var error=new Error(body.error);error.code=body.error;throw error;}
+    return body;
+  }finally{clearTimeout(timer);}
+}
+$('loginForm').addEventListener('submit',async function(event){
+  event.preventDefault();if(busy)return;
+  busy=true;$('login').disabled=true;$('message').textContent='';
+  var value=$('password').value;$('password').value='';
+  try{await api('login',{password:value});loggedIn(true);$('code').focus();}
+  catch(error){failure(error);}
+  finally{busy=false;$('login').disabled=false;}
+});
+async function verify(code){
+  busy=true;$('lookup').disabled=true;$('redeem').disabled=true;
+  try{
+    var body=await api('verify',{code:code});
+    if(selectedCode===code&&normalizedCode()===code){display(body.coupon);$('message').textContent='';}
+  }catch(error){
+    if(selectedCode===code){failure(error);if(error.code==='coupon_not_found')clearResult();}
+  }finally{busy=false;$('lookup').disabled=false;}
+}
+$('lookupForm').addEventListener('submit',async function(event){
+  event.preventDefault();if(busy)return;
+  clearResult();selectedCode=normalizedCode();$('message').textContent='조회 중…';
+  await verify(selectedCode);
+});
+$('code').addEventListener('input',function(){clearResult();$('message').textContent='';});
+$('redeem').addEventListener('click',async function(){
+  if(busy||!selectedCode||$('redeem').disabled)return;
+  var code=selectedCode;
+  if(!window.confirm(code+'\n이 쿠폰의 경품 수령을 확정할까요? 취소할 수 없습니다.'))return;
+  busy=true;$('redeem').disabled=true;$('lookup').disabled=true;$('code').disabled=true;
+  $('message').textContent='수령 확정 중… 아직 경품을 전달하지 마세요.';
+  try{
+    var body=await api('redeem',{code:code});display(body.coupon);
+    $('message').textContent='수령 확정 성공. 이제 경품을 전달하세요.';
+  }catch(error){failure(error);}
+  finally{busy=false;$('lookup').disabled=false;$('code').disabled=false;}
+});
+$('logout').addEventListener('click',async function(){
+  if(busy)return;busy=true;$('logout').disabled=true;
+  try{await api('logout',{});loggedIn(false);$('message').textContent='로그아웃되었습니다.';}
+  catch(error){failure(error);}
+  finally{busy=false;$('logout').disabled=false;}
+});
+setInterval(function(){
+  if(!busy&&selectedCode&&!document.hidden)verify(selectedCode);
+},5000);
+api('session').then(function(){loggedIn(true);}).catch(function(error){
+  loggedIn(false);if(error.code!=='unauthorized')failure(error);
+}).finally(function(){$('login').disabled=false;});
+})();
+</script>
+</body>
+</html>

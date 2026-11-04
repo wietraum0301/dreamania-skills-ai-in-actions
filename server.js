@@ -3,11 +3,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 const draw = require('./roulette');
 const store = require('./table-store');
+const staffApi = require('./staff-api');
 
 const homepage = fs.readFileSync(path.join(__dirname, 'index.html'));
+const staffPage = fs.readFileSync(path.join(__dirname, 'staff.html'));
 
 const server = http.createServer((request, response) => {
   const pathname = request.url.split('?')[0];
+  if (pathname.startsWith('/api/staff/')) {
+    staffApi(request, response, pathname);
+    return;
+  }
   if (pathname === '/api/roulette/status' && request.method === 'GET') {
     store.readiness().then(() => {
       response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -37,17 +43,22 @@ const server = http.createServer((request, response) => {
     return;
   }
 
-  if (pathname !== '/' && pathname !== '/index.html') {
+  if (pathname !== '/' && pathname !== '/index.html' && pathname !== '/staff') {
     response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     response.end('Not Found');
     return;
   }
 
+  const page = pathname === '/staff' ? staffPage : homepage;
   response.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
-    'Content-Length': homepage.length
+    'Content-Length': page.length,
+    ...(pathname === '/staff' ? {
+      'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY',
+      'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer'
+    } : {})
   });
-  response.end(request.method === 'HEAD' ? undefined : homepage);
+  response.end(request.method === 'HEAD' ? undefined : page);
 });
 
 if (require.main === module) {

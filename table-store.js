@@ -150,6 +150,66 @@ async function readiness() {
   validateInventory(inventory, getSecret());
 }
 
+function staffCoupon(winner) {
+  const coupon = publicCoupon(winner, 'verified');
+  if (winner.kind !== 'winner' || !/^winner-[a-f0-9]{64}$/.test(winner.rowKey) ||
+    typeof winner.redeemed !== 'boolean' ||
+    (winner.redeemedAt !== undefined &&
+      (typeof winner.redeemedAt !== 'string' || !Number.isFinite(Date.parse(winner.redeemedAt))))) {
+    throw new RouletteError('invalid_coupon');
+  }
+  return {
+    code: coupon.code, prizeName: NAMES[winner.prizeKey],
+    nickname: coupon.nickname, wonAt: coupon.wonAt,
+    redeemed: winner.redeemed, redeemedAt: winner.redeemedAt || null
+  };
+}
+
+async function findCoupon(client, code) {
+  if (typeof code !== 'string' ||
+    !/^GS-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(code)) {
+    throw new RouletteError('invalid_code', 400);
+  }
+  let winner;
+  for await (const entity of client.listEntities({
+    queryOptions: { filter: `PartitionKey eq '${PARTITION}' and couponCode eq '${code}'` },
+    requestOptions: { timeout: 3000 }
+  })) {
+    if (winner) throw new RouletteError('invalid_coupon');
+    winner = entity;
+  }
+  if (!winner) throw new RouletteError('coupon_not_found', 404);
+  staffCoupon(winner);
+  if (winner.partitionKey !== PARTITION || winner.couponCode !== code ||
+    typeof winner.etag !== 'string' || !winner.etag || winner.etag === '*') {
+    throw new RouletteError('invalid_coupon');
+  }
+  return winner;
+}
+
+async function verifyCoupon(client, code) {
+  return staffCoupon(await findCoupon(client, code));
+}
+
+async function redeemCoupon(client, code) {
+  const winner = await findCoupon(client, code);
+  if (winner.redeemed) throw new RouletteError('already_redeemed', 409);
+  const redeemedAt = new Date().toISOString();
+  try {
+    // Never use a wildcard ETag: only one staff member can redeem this version.
+    await client.updateEntity({
+      partitionKey: PARTITION, rowKey: winner.rowKey, redeemed: true, redeemedAt
+    }, 'Merge', { etag: winner.etag, requestOptions: { timeout: 3000 } });
+  } catch (error) {
+    if (error.statusCode === 412) {
+      const latest = await findCoupon(client, code);
+      throw new RouletteError(latest.redeemed ? 'already_redeemed' : 'coupon_changed', 409);
+    }
+    throw error;
+  }
+  return staffCoupon({ ...winner, redeemed: true, redeemedAt });
+}
+
 if (require.main === module) {
   Promise.resolve().then(() => initialize(getClient(), getSecret())).then(() => {
     console.log('Azure roulette table initialized; existing stock was not reset.');
@@ -159,4 +219,7 @@ if (require.main === module) {
   });
 }
 
-module.exports = { getClient, getSecret, award, initialize, readiness, RouletteError, PARTITION, STOCK };
+module.exports = {
+  getClient, getSecret, award, initialize, readiness, verifyCoupon, redeemCoupon,
+  RouletteError, PARTITION, STOCK
+};

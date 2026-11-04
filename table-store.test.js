@@ -2,7 +2,9 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { createHmac, randomUUID } = require('node:crypto');
 const { TableClient } = require('@azure/data-tables');
-const { award, initialize, getClient, getSecret, PARTITION, STOCK } = require('./table-store');
+const {
+  award, initialize, getClient, getSecret, verifyCoupon, redeemCoupon, PARTITION, STOCK
+} = require('./table-store');
 
 const secret = 'test-only-identity-secret-32-bytes-long';
 const participant = {
@@ -26,8 +28,18 @@ class MemoryTable {
     if (this.rows.has(entity.rowKey)) throw serviceError(409);
     this.rows.set(entity.rowKey, { ...entity, etag: randomUUID() });
   }
-  async *listEntities() {
-    for (const row of this.rows.values()) yield { ...row };
+  async *listEntities(options = {}) {
+    const code = options.queryOptions?.filter?.match(/couponCode eq '([^']+)'/)?.[1];
+    for (const row of this.rows.values()) {
+      if (code === undefined || row.couponCode === code) yield { ...row };
+    }
+  }
+  async updateEntity(entity, mode, options) {
+    assert.equal(mode, 'Merge');
+    const current = this.rows.get(entity.rowKey);
+    if (!current) throw serviceError(404);
+    if (!options.etag || options.etag === '*' || current.etag !== options.etag) throw serviceError(412);
+    this.rows.set(entity.rowKey, { ...current, ...entity, etag: randomUUID() });
   }
   async deleteEntity(partition, rowKey) {
     this.rows.delete(rowKey);
@@ -240,4 +252,105 @@ test('configuration must include connection string and a sufficiently long secre
   process.env.ROULETTE_IDENTITY_SECRET = 'short';
   assert.throws(getClient, { code: 'not_configured' });
   assert.throws(getSecret, { code: 'not_configured' });
+});
+
+test('staff lookup reads a real coupon and exposes only redemption fields', async (t) => {
+  const client = await makeTable(t);
+  const coupon = await award(client, participant, secret);
+  const verified = await verifyCoupon(client, coupon.code);
+  assert.deepEqual(Object.keys(verified).sort(),
+    ['code', 'nickname', 'prizeName', 'redeemed', 'redeemedAt', 'wonAt'].sort());
+  assert.equal(verified.code, coupon.code);
+  assert.equal(verified.nickname, participant.nickname);
+  assert.equal(verified.redeemed, false);
+  assert.equal(verified.redeemedAt, null);
+  assert.equal((await client.getEntity(PARTITION, 'inventory')).awarded, 1);
+});
+
+test('invalid codes cannot inject filters or modify storage', async (t) => {
+  const client = await makeTable(t);
+  for (const code of [null, '', 'GS-fake', "' or PartitionKey ne ''", 'GS-' + 'a'.repeat(36)]) {
+    await assert.rejects(verifyCoupon(client, code), { code: 'invalid_code', status: 400 });
+    await assert.rejects(redeemCoupon(client, code), { code: 'invalid_code', status: 400 });
+  }
+  await assert.rejects(verifyCoupon(client, `GS-${randomUUID()}`),
+    { code: 'coupon_not_found', status: 404 });
+  await assert.rejects(redeemCoupon(client, `GS-${randomUUID()}`),
+    { code: 'coupon_not_found', status: 404 });
+  assert.equal((await client.getEntity(PARTITION, 'inventory')).awarded, 0);
+});
+
+test('redemption persists time and preserves participant fields and exact inventory', async (t) => {
+  const client = await makeTable(t);
+  const coupon = await award(client, participant, secret);
+  const inventory = await client.getEntity(PARTITION, 'inventory');
+  const result = await redeemCoupon(client, coupon.code);
+  assert.equal(result.redeemed, true);
+  assert.ok(Number.isFinite(Date.parse(result.redeemedAt)));
+  assert.deepEqual(await verifyCoupon(client, coupon.code), result);
+  assert.deepEqual(await client.getEntity(PARTITION, 'inventory'), inventory);
+  const winner = (await rows(client)).find((row) => row.kind === 'winner');
+  for (const [key, value] of Object.entries(participant)) assert.equal(winner[key], value);
+  await assert.rejects(redeemCoupon(client, coupon.code), { code: 'already_redeemed', status: 409 });
+  assert.equal((await award(client, participant, secret)).code, coupon.code);
+  await initialize(client, secret);
+  assert.deepEqual(await client.getEntity(PARTITION, 'inventory'), inventory);
+});
+
+test('concurrent staff redemptions allow exactly one successful confirmation', async (t) => {
+  const client = await makeTable(t);
+  const coupon = await award(client, participant, secret);
+  const results = await Promise.allSettled(Array.from({ length: 8 }, () =>
+    redeemCoupon(client, coupon.code)));
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  for (const result of results.filter((result) => result.status === 'rejected')) {
+    assert.equal(result.reason.code, 'already_redeemed');
+    assert.equal(result.reason.status, 409);
+  }
+  assert.equal((await verifyCoupon(client, coupon.code)).redeemed, true);
+  assert.equal((await client.getEntity(PARTITION, 'inventory')).awarded, 1);
+});
+
+test('storage update failures never report redemption success', async (t) => {
+  const client = await makeTable(t);
+  const coupon = await award(client, participant, secret);
+  t.mock.method(client, 'updateEntity', async () => { throw serviceError(500); });
+  await assert.rejects(redeemCoupon(client, coupon.code), { statusCode: 500 });
+  assert.equal((await verifyCoupon(client, coupon.code)).redeemed, false);
+});
+
+test('lost redemption response can be reconciled by lookup without a second redemption', async (t) => {
+  const client = await makeTable(t);
+  const coupon = await award(client, participant, secret);
+  const update = client.updateEntity.bind(client);
+  t.mock.method(client, 'updateEntity', async (...args) => {
+    await update(...args);
+    throw serviceError(500);
+  });
+  await assert.rejects(redeemCoupon(client, coupon.code), { statusCode: 500 });
+  assert.equal((await verifyCoupon(client, coupon.code)).redeemed, true);
+  await assert.rejects(redeemCoupon(client, coupon.code), { code: 'already_redeemed' });
+});
+
+test('ambiguous codes and invalid redemption flags fail closed', async (t) => {
+  const client = await makeTable(t);
+  const coupon = await award(client, participant, secret);
+  const winner = (await rows(client)).find((row) => row.kind === 'winner');
+  await client.createEntity({ ...winner, rowKey: `winner-${'a'.repeat(64)}` });
+  await assert.rejects(verifyCoupon(client, coupon.code), { code: 'invalid_coupon' });
+  await assert.rejects(redeemCoupon(client, coupon.code), { code: 'invalid_coupon' });
+  await client.deleteEntity(PARTITION, `winner-${'a'.repeat(64)}`);
+  await client.updateEntity({ partitionKey: PARTITION, rowKey: winner.rowKey, redeemed: 'false' },
+    'Merge', { etag: winner.etag });
+  await assert.rejects(redeemCoupon(client, coupon.code), { code: 'invalid_coupon' });
+});
+
+test('legacy redeemed records without a timestamp still block reuse', async (t) => {
+  const client = await makeTable(t);
+  const coupon = await award(client, participant, secret);
+  const winner = (await rows(client)).find((row) => row.kind === 'winner');
+  await client.updateEntity({ partitionKey: PARTITION, rowKey: winner.rowKey, redeemed: true },
+    'Merge', { etag: winner.etag });
+  assert.equal((await verifyCoupon(client, coupon.code)).redeemedAt, null);
+  await assert.rejects(redeemCoupon(client, coupon.code), { code: 'already_redeemed' });
 });
