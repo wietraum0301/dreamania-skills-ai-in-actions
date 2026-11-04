@@ -145,6 +145,11 @@ async function initialize(client, secret) {
   }
 }
 
+async function readiness() {
+  const inventory = await find(getClient(), 'inventory');
+  validateInventory(inventory, getSecret());
+}
+
 if (require.main === module) {
   Promise.resolve().then(() => initialize(getClient(), getSecret())).then(() => {
     console.log('Azure roulette table initialized; existing stock was not reset.');
@@ -154,4 +159,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { getClient, getSecret, award, initialize, RouletteError, PARTITION, STOCK };
+module.exports = { getClient, getSecret, award, initialize, readiness, RouletteError, PARTITION, STOCK };

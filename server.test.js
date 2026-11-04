@@ -49,6 +49,20 @@ test('unsupported homepage methods return 405', async () => {
   assert.equal(response.headers.get('allow'), 'GET, HEAD');
 });
 
+test('readiness checks storage without consuming prizes or exposing records', async (t) => {
+  t.mock.method(store, 'readiness', async () => {});
+  const response = await fetch(`${baseUrl}/api/roulette/status`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ready: true });
+});
+
+test('readiness fails explicitly when storage is unavailable', async (t) => {
+  t.mock.method(store, 'readiness', async () => { throw new Error('private details'); });
+  const response = await fetch(`${baseUrl}/api/roulette/status`);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { ready: false });
+});
+
 const participant = {
   fullName: 'Test', nickname: 'Tester', company: 'Test company',
   phone: '010-0000-0000', email: 'test@example.com', jobRole: '개발',
