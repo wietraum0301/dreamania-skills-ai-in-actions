@@ -1,53 +1,60 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-
-name: Build and deploy ASP.Net Core app to Azure Web App - nacho
+name: Deploy homepage to Azure Web App - nacho
 
 on:
   push:
     branches:
-      - 'main'
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-nacho-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
-    runs-on: windows-latest
-    permissions:
-      contents: read #This is required for actions/checkout
-
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up .NET Core
-        uses: actions/setup-dotnet@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          dotnet-version: '11.x'
+          node-version: '24.x'
 
-      - name: Build with dotnet
-        run: dotnet build --configuration Release
+      - name: Test homepage server
+        run: npm test
 
-      - name: dotnet publish
-        run: dotnet publish -c Release -o "${{env.DOTNET_ROOT}}/myapp"
+      - name: Prepare deployment package
+        run: |
+          mkdir deploy
+          cp index.html server.js package.json deploy/
 
-      - name: Upload artifact for deployment job
+      - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
         with:
-          name: .net-app
-          path: ${{env.DOTNET_ROOT}}/myapp
+          name: web-app
+          path: deploy/
 
   deploy:
-    runs-on: windows-latest
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
     needs: build
     permissions:
-      id-token: write #This is required for requesting the JWT
-      contents: read #This is required for actions/checkout
-
+      id-token: write
+      contents: read
     steps:
-      - name: Download artifact from build job
+      - name: Download deployment artifact
         uses: actions/download-artifact@v4
         with:
-          name: .net-app
-      
+          name: web-app
+          path: deploy
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -56,10 +63,9 @@ jobs:
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_3DE9D946C20F43CEAEE071F46F9EA7A3 }}
 
       - name: Deploy to Azure Web App
-        id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'nacho'
-          slot-name: 'Production'
-          package: .
-          
+          app-name: nacho
+          slot-name: Production
+          package: deploy
+          startup-command: 'npm start'
