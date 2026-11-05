@@ -18,7 +18,7 @@ Node.js 24 LTS에서 `npm ci` 후 `npm start`로 로컬 실행하고 `npm test`�
 
 **SharePoint 및 Power Automate는 사용하지 않습니다.** 기존 `ROULETTE_API_URL` 설정은
 제거해도 됩니다. 서버가 Azure Table SDK로 추첨과 참가 정보 저장을 직접 처리합니다.
-메일 발송은 포함되지 않으며 쿠폰 화면에서도 발송됐다고 표시하지 않습니다.
+쿠폰 발급 시 Azure Communication Services Email로 HTML 쿠폰 메일을 발송합니다.
 
 ### 연결과 최초 초기화
 
@@ -30,13 +30,18 @@ Node.js 24 LTS에서 `npm ci` 후 `npm start`로 로컬 실행하고 `npm test`�
    연결 문자열과 비밀 값은 채팅/저장소에 넣지 말고 Azure 환경 변수 또는 Key Vault 참조로
    관리하세요. 연결 문자열에는 쓰기 권한이 필요합니다. 로컬에서는 커밋하지 않는 환경 변수로
    동일 값을 설정할 수 있습니다.
-3. 같은 환경 변수가 설정된 환경에서 `npm ci` 후 **`npm run setup:table`**을 한 번 실행합니다.
+3. Azure Communication Services와 연결된 Email Communication Service 리소스 및 검증된 발신 도메인을
+   준비한 뒤, `AZURE_COMMUNICATION_EMAIL_CONNECTION_STRING`과
+   `AZURE_COMMUNICATION_EMAIL_SENDER`(검증된 발신 주소)를 `nacho` 앱 설정에 추가합니다.
+   연결 문자열은 비밀로 관리하세요. 메일 설정이 없거나 발송이 실패하면 쿠폰 발급은 유지되고,
+   응답에는 `mailed: false`가 표시됩니다. 메일 발송 성공 후 수신 상태를 쿠폰 행에 기록합니다.
+4. 같은 환경 변수가 설정된 환경에서 `npm ci` 후 **`npm run setup:table`**을 한 번 실행합니다.
    Azure SSH를 사용한다면 배포 후 `/home/site/wwwroot`에서 실행하세요.
    이 명령은 `GSTARRoulette` 테이블과 `GSTAR2026` 파티션의 초기 재고 행을 만듭니다.
    기존 재고가 있으면 검증만 하고 재고를 복구하거나 재설정하지 않습니다.
    참가 기록이 남아 있는데 재고 행이 없으면 초기화를 거부합니다.
-4. Web App을 재시작하고 기본 도메인에서 참가 → 게임 → 룰렛 → 쿠폰을 확인합니다.
-   초기화하지 않거나 환경 변수가 없으면 503과 명시적인 설정 오류를 반환합니다.
+5. Web App을 재시작하고 기본 도메인에서 참가 → 게임 → 룰렛 → 쿠폰 및 이메일을 확인합니다.
+   추첨용 저장소를 초기화하지 않거나 저장소 환경 변수가 없으면 503과 설정 오류를 반환합니다.
    운영 배포 워크플로는 연결 문자열이 없으면 `nacho`와 같은 리소스 그룹/지역에 전용
    StorageV2 Standard LRS 계정을 생성하고 연결 문자열과 난수 identity secret을 앱 환경 변수에
    등록한 다음 테이블을 초기화합니다. 계정은 앱 리소스 ID로 결정되는 고정 이름을 사용하며

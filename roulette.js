@@ -1,4 +1,5 @@
 const store = require('./table-store');
+const { sendCouponEmail } = require('./coupon-email');
 
 function reply(response, status, body) {
   response.writeHead(status, {
@@ -50,11 +51,31 @@ async function draw(request, response) {
   }
 
   try {
-    const result = await store.award(store.getClient(), {
+    const client = store.getClient();
+    const participant = {
       fullName: input.fullName.trim(), nickname: input.nickname.trim(),
       company: input.company.trim(), phone, email: input.email.trim(),
       jobRole: input.jobRole, consent: true, score: input.score, bugs: input.bugs
-    }, store.getSecret());
+    };
+    const result = await store.award(client, participant, store.getSecret());
+    if (result.status === 'awarded') {
+      try {
+        await sendCouponEmail({
+          recipient: participant.email, fullName: participant.fullName,
+          nickname: result.nickname, company: result.company,
+          coupon: result
+        });
+        result.mailed = true;
+        try {
+          await store.markMailed(client, result.code);
+        } catch (error) {
+          console.error(`Coupon email status update failed (${error.name}).`);
+        }
+      } catch (error) {
+        const reason = error.message === 'email_not_configured' ? 'not_configured' : error.name;
+        console.error(`Coupon email delivery failed (${reason}).`);
+      }
+    }
     reply(response, 200, result);
   } catch (error) {
     const expected = error instanceof store.RouletteError;
