@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>GSTAR 쿠폰 확인 (스태프)</title>
+<style>
+:root{--bg:#0d1117;--bg2:#161b22;--card:#1c2330;--line:#30363d;--fg:#f0f6fc;--muted:#9aa4b2;--accent:#7c3aed;--accent2:#2f81f7;--ok:#3fb950;--hot:#ff6b6b;--warn:#f2cc60}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+.app{max-width:560px;margin:0 auto;padding:calc(14px + env(safe-area-inset-top)) 16px 24px;display:flex;flex-direction:column;gap:14px}
+h1{font-size:20px;margin:4px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
+label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
+input{width:100%;padding:13px;border-radius:12px;border:1px solid var(--line);background:var(--bg2);color:var(--fg);font-size:18px}
+.row{display:flex;gap:8px}.row>*{flex:1}
+button{appearance:none;border:0;border-radius:12px;padding:13px;font-size:16px;font-weight:800;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2));cursor:pointer}
+button.ghost{background:transparent;border:1px solid var(--line);font-weight:700}
+button.ok{background:#1f6f3a}
+button[disabled]{opacity:.45}
+.msg{min-height:20px;font-size:14px;color:var(--muted)}
+.msg.err{color:var(--hot)}
+.inv{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.inv div{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:10px;font-size:13px;color:var(--muted)}
+.inv b{display:block;font-size:20px;color:var(--fg)}
+.coupon{border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px;background:var(--bg2)}
+.coupon .code{font:800 20px Menlo,Consolas,monospace;letter-spacing:1px}
+.tag{display:inline-block;font-size:12px;border-radius:6px;padding:2px 8px;background:#1f6f3a}
+.tag.used{background:#6b2a2a}
+.small{font-size:13px;color:var(--muted)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>🍺 GSTAR 쿠폰 확인 (스태프)</h1>
+
+  <form class="card" id="login">
+    <label for="pin">스태프 PIN</label>
+    <div class="row"><input id="pin" type="password" inputmode="numeric" autocomplete="off"><button type="submit" style="flex:0 0 96px">확인</button></div>
+    <label for="staffName" style="margin-top:10px">확인자 이름 (기록용)</label>
+    <input id="staffName" type="text" maxlength="30" placeholder="예: 바 스태프 A">
+    <div class="msg" id="loginMsg" aria-live="polite"></div>
+  </form>
+
+  <div id="main" hidden>
+    <div class="card" style="display:flex;flex-direction:column;gap:10px">
+      <div class="row" style="align-items:center"><b id="openTxt">-</b><button type="button" class="ghost" id="btnOpen" style="flex:0 0 140px">-</button></div>
+      <div class="inv" id="inv"></div>
+      <button type="button" class="ghost" id="btnRefresh">현황 새로 고침</button>
+    </div>
+
+    <form class="card" id="find" style="display:flex;flex-direction:column;gap:10px;margin-top:14px">
+      <label for="q">쿠폰 코드(GS-XXXXX) 또는 휴대폰 뒤 4자리</label>
+      <div class="row"><input id="q" type="text" autocapitalize="characters" autocomplete="off" spellcheck="false"><button type="submit" style="flex:0 0 96px">조회</button></div>
+      <div class="msg" id="findMsg" aria-live="polite"></div>
+      <div id="results" style="display:flex;flex-direction:column;gap:8px"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var API='/api/staff';
+function $(id){return document.getElementById(id);}
+var pin='';
+function call(data){
+  data.pin=pin;
+  return fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data),cache:'no-store'})
+    .then(function(r){return r.json().catch(function(){return {};}).then(function(b){return {status:r.status,body:b};});});
+}
+function errText(r){
+  var e=r.body&&r.body.error;
+  if(e==='bad_pin')return 'PIN이 맞지 않습니다. (남은 시도 '+r.body.left+'회)';
+  if(e==='locked')return '시도가 너무 많아 10분간 잠겼습니다.';
+  if(e==='not_configured')return '서버 설정이 필요합니다. 관리자에게 알려 주세요.';
+  if(e==='not_found')return '해당 쿠폰이 없습니다.';
+  if(e==='invalid_input')return '쿠폰 코드(GS-XXXXX) 또는 뒤 4자리 숫자를 입력해 주세요.';
+  return '잠시 후 다시 시도해 주세요.';
+}
+function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
+function fmt(iso){return iso?new Date(iso).toLocaleString('ko-KR'):'';}
+
+function renderStatus(s){
+  $('openTxt').textContent=s.open?'🟢 추첨 진행 중':'🔴 추첨 종료됨';
+  $('btnOpen').textContent=s.open?'추첨 종료하기':'추첨 다시 열기';
+  $('btnOpen').dataset.open=s.open?'1':'0';
+  var inv=$('inv');inv.textContent='';
+  function box(title,big,sub){var d=el('div');d.appendChild(document.createTextNode(title));d.appendChild(el('b',null,big));if(sub)d.appendChild(document.createTextNode(sub));inv.appendChild(d);}
+  box('발급 / 사용',s.issued+' / '+s.redeemed,'참가 '+s.played+' · 메일 '+s.mailed);
+  Object.keys(s.prizes).forEach(function(k){var p=s.prizes[k];box(p.name+' 남음',String(p.remaining),'한도 '+p.limit+' · 발급 '+p.issued+' · 사용 '+p.redeemed);});
+}
+function loadStatus(){
+  return call({action:'status'}).then(function(r){if(r.status===200)renderStatus(r.body);return r;});
+}
+
+$('login').addEventListener('submit',function(e){
+  e.preventDefault();pin=$('pin').value.trim();$('loginMsg').className='msg';$('loginMsg').textContent='확인 중…';
+  loadStatus().then(function(r){
+    if(r.status===200){$('loginMsg').textContent='';$('login').hidden=true;$('main').hidden=false;$('q').focus();}
+    else{$('loginMsg').className='msg err';$('loginMsg').textContent=errText(r);pin='';}
+  }).catch(function(){$('loginMsg').className='msg err';$('loginMsg').textContent='네트워크 오류입니다.';});
+});
+$('btnRefresh').addEventListener('click',function(){loadStatus();});
+$('btnOpen').addEventListener('click',function(){
+  var open=$('btnOpen').dataset.open==='1';
+  if(!confirm(open?'추첨을 종료할까요? 손님 화면에 "추첨이 종료되었습니다"가 표시됩니다.':'추첨을 다시 열까요?'))return;
+  call({action:'setOpen',open:!open}).then(function(r){if(r.status===200)renderStatus(r.body);else alert(errText(r));});
+});
+
+function renderCoupons(list){
+  var box=$('results');box.textContent='';
+  if(!list.length){$('findMsg').textContent='일치하는 쿠폰이 없습니다.';return;}
+  $('findMsg').textContent=list.length+'건';
+  list.forEach(function(c){
+    var d=el('div','coupon');
+    var top=el('div');top.appendChild(el('span','code',c.code+' '));top.appendChild(el('span',c.redeemed?'tag used':'tag',c.redeemed?'사용 완료':'사용 가능'));d.appendChild(top);
+    d.appendChild(el('div',null,c.prizeName));
+    d.appendChild(el('div','small',[c.fullName,c.nickname,c.company,'뒤 4자리 '+c.phone4].filter(Boolean).join(' · ')));
+    d.appendChild(el('div','small','당첨 '+fmt(c.wonAt)+(c.redeemed?' · 사용 '+fmt(c.checkedAt)+' ('+c.checkedBy+')':'')));
+    if(!c.redeemed){
+      var b=el('button','ok','사용 처리');b.type='button';
+      b.addEventListener('click',function(){
+        if(!confirm(c.code+' ('+c.prizeName+')을 사용 처리할까요?'))return;
+        b.disabled=true;
+        call({action:'redeem',code:c.code,staff:$('staffName').value.trim()}).then(function(r){
+          if(r.status===200){renderCoupons([r.body.coupon]);$('findMsg').textContent='✅ 사용 처리했습니다. 경품을 드리세요.';loadStatus();}
+          else if(r.status===409&&r.body.coupon){renderCoupons([r.body.coupon]);$('findMsg').textContent='⚠️ 이미 사용된 쿠폰입니다.';}
+          else{b.disabled=false;$('findMsg').textContent=errText(r);}
+        }).catch(function(){b.disabled=false;$('findMsg').textContent='네트워크 오류입니다. 다시 눌러 주세요.';});
+      });
+      d.appendChild(b);
+    }
+    box.appendChild(d);
+  });
+}
+$('find').addEventListener('submit',function(e){
+  e.preventDefault();var q=$('q').value.trim().toUpperCase();
+  var data={action:'lookup'};
+  if(/^\d{4}$/.test(q))data.phone4=q;else{if(/^[A-Z0-9]{5}$/.test(q))q='GS-'+q;data.code=q;}
+  $('findMsg').textContent='조회 중…';$('results').textContent='';
+  call(data).then(function(r){if(r.status===200)renderCoupons(r.body.coupons);else $('findMsg').textContent=errText(r);})
+    .catch(function(){$('findMsg').textContent='네트워크 오류입니다.';});
+});
+})();
+</script>
+</body>
+</html>
