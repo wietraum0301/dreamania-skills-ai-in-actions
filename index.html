@@ -107,6 +107,11 @@ input[aria-invalid="true"]{border-color:var(--hot)}
 .links a.pro{background:linear-gradient(135deg,var(--accent),var(--accent2))}
 .links a.yt{background:#b91c1c}
 .links a.sub{background:transparent;border:1px solid var(--line);font-weight:700}
+.venue-list{display:grid;gap:10px;margin-block-start:10px}
+.venue{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px}
+.venue h3{margin:0 0 4px;font-size:15px}
+.venue p{font-size:13px}
+.venue a{color:#c4b5fd;text-decoration:underline;text-underline-offset:3px}
 .notice{font-size:13px;color:var(--muted);text-align:center}
 .spin-wait{font-size:14px;color:var(--muted);text-align:center;min-height:20px}
 :focus-visible{outline:3px solid #a78bfa;outline-offset:2px}
@@ -200,6 +205,19 @@ input[aria-invalid="true"]{border-color:var(--hot)}
       <p style="color:var(--fg);font-weight:700;margin-block-end:6px">🎁 수령 방법</p>
       <p>이 화면이나 메일로 받은 쿠폰을 <b>리리코이 · 올데이라운지</b> 바 스태프에게 보여 주세요. 쿠폰은 1회만 사용할 수 있습니다.</p>
       <p id="cpMail" style="margin-block-start:8px"></p>
+    </div>
+    <div class="card">
+      <p style="color:var(--fg);font-weight:700">📍 매장 안내</p>
+      <div class="venue-list">
+        <div class="venue">
+          <h3>19일 · 올데이라운지</h3>
+          <p><a href="https://www.google.com/maps/search/?api=1&amp;query=부산%20해운대구%20센텀2로%2025%20106호" target="_blank" rel="noopener noreferrer">부산 해운대구 센텀2로 25 106호</a></p>
+        </div>
+        <div class="venue">
+          <h3>20일 · 리리코이</h3>
+          <p><a href="https://www.google.com/maps/search/?api=1&amp;query=부산%20해운대구%20해운대해변로%20298번길%2024%201층%201-19호" target="_blank" rel="noopener noreferrer">부산 해운대구 해운대해변로 298번길 24 1층 1-19호</a></p>
+        </div>
+      </div>
     </div>
     <div class="links">
       <a class="pro" id="lnkPro" target="_blank" rel="noopener">🤖 GitHub Copilot Pro 시작하기</a>

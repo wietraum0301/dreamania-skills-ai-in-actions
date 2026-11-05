@@ -73,7 +73,8 @@ function publicCoupon(winner, status) {
   }
   return {
     status, code: winner.couponCode, prizeKey: winner.prizeKey,
-    wonAt: winner.wonAt, nickname: winner.nickname, company: winner.company, mailed: false
+    wonAt: winner.wonAt, nickname: winner.nickname, company: winner.company,
+    mailed: winner.mailed === true
   };
 }
 
@@ -195,6 +196,22 @@ async function verifyCoupon(client, code) {
   return staffCoupon(await findCoupon(client, code));
 }
 
+async function markMailed(client, code) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const winner = await findCoupon(client, code);
+    if (winner.mailed === true) return;
+    try {
+      await client.updateEntity({
+        partitionKey: PARTITION, rowKey: winner.rowKey,
+        mailed: true, mailSentAt: new Date().toISOString()
+      }, 'Merge', { etag: winner.etag, requestOptions: { timeout: 3000 } });
+      return;
+    } catch (error) {
+      if (error.statusCode !== 412 || attempt === 1) throw error;
+    }
+  }
+}
+
 async function redeemCoupon(client, code) {
   const winner = await findCoupon(client, code);
   if (winner.redeemed) throw new RouletteError('already_redeemed', 409);
@@ -224,6 +241,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  getClient, getSecret, award, initialize, readiness, verifyCoupon, redeemCoupon,
+  getClient, getSecret, award, initialize, readiness, verifyCoupon, markMailed, redeemCoupon,
   RouletteError, PARTITION, STOCK
 };
