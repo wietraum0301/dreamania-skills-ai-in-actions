@@ -60,7 +60,8 @@ async function draw(request, response) {
     const result = await store.award(client, participant, store.getSecret());
     if (result.status === 'awarded') {
       result.mailed = await sendCouponMail({
-        email: participant.email, nickname: participant.nickname,
+        email: participant.email, fullName: participant.fullName, nickname: participant.nickname,
+        company: participant.company, wonAt: result.wonAt,
         prizeName: store.NAMES[result.prizeKey], code: result.code
       });
       if (result.mailed) {
