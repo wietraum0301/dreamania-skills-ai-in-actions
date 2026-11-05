@@ -18,7 +18,7 @@ Node.js 24 LTS에서 `npm ci` 후 `npm start`로 로컬 실행하고 `npm test`�
 
 **SharePoint 및 Power Automate는 사용하지 않습니다.** 기존 `ROULETTE_API_URL` 설정은
 제거해도 됩니다. 서버가 Azure Table SDK로 추첨과 참가 정보 저장을 직접 처리합니다.
-메일 발송은 포함되지 않으며 쿠폰 화면에서도 발송됐다고 표시하지 않습니다.
+메일 발송은 Azure Communication Services(ACS) Email로 발송합니다. 아래 "메일 설정" 항목의 앱 설정이 없으면 메일은 발송되지 않으며 쿠폰 화면에도 발송되지 않았다고 표시합니다.
 
 ### 연결과 최초 초기화
 
@@ -30,6 +30,9 @@ Node.js 24 LTS에서 `npm ci` 후 `npm start`로 로컬 실행하고 `npm test`�
    연결 문자열과 비밀 값은 채팅/저장소에 넣지 말고 Azure 환경 변수 또는 Key Vault 참조로
    관리하세요. 연결 문자열에는 쓰기 권한이 필요합니다. 로컬에서는 커밋하지 않는 환경 변수로
    동일 값을 설정할 수 있습니다.
+   메일을 보내려면 **`ACS_CONNECTION_STRING`**(Azure Communication Services 연결 문자열)과
+   **`ACS_SENDER_ADDRESS`**(ACS Email에서 검증된 발신 주소)도 설정합니다. 이 두 값은
+   배포 워크플로가 덮어쓰지 않으므로 Azure 앱 설정에서 직접 관리합니다.
 3. 같은 환경 변수가 설정된 환경에서 `npm ci` 후 **`npm run setup:table`**을 한 번 실행합니다.
    Azure SSH를 사용한다면 배포 후 `/home/site/wwwroot`에서 실행하세요.
    이 명령은 `GSTARRoulette` 테이블과 `GSTAR2026` 파티션의 초기 재고 행을 만듭니다.

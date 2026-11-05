@@ -1,4 +1,5 @@
 const store = require('./table-store');
+const { sendCouponMail } = require('./coupon-mail');
 
 function reply(response, status, body) {
   response.writeHead(status, {
@@ -50,11 +51,24 @@ async function draw(request, response) {
   }
 
   try {
-    const result = await store.award(store.getClient(), {
+    const client = store.getClient();
+    const participant = {
       fullName: input.fullName.trim(), nickname: input.nickname.trim(),
       company: input.company.trim(), phone, email: input.email.trim(),
       jobRole: input.jobRole, consent: true, score: input.score, bugs: input.bugs
-    }, store.getSecret());
+    };
+    const result = await store.award(client, participant, store.getSecret());
+    if (result.status === 'awarded') {
+      result.mailed = await sendCouponMail({
+        email: participant.email, nickname: participant.nickname,
+        prizeName: store.NAMES[result.prizeKey], code: result.code
+      });
+      if (result.mailed) {
+        await store.markMailed(client, result.code).catch((error) => {
+          console.error(`Coupon mail flag update failed (${error.name}).`);
+        });
+      }
+    }
     reply(response, 200, result);
   } catch (error) {
     const expected = error instanceof store.RouletteError;

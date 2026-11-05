@@ -73,7 +73,8 @@ function publicCoupon(winner, status) {
   }
   return {
     status, code: winner.couponCode, prizeKey: winner.prizeKey,
-    wonAt: winner.wonAt, nickname: winner.nickname, company: winner.company, mailed: false
+    wonAt: winner.wonAt, nickname: winner.nickname, company: winner.company,
+    mailed: winner.mailed === true
   };
 }
 
@@ -214,6 +215,18 @@ async function redeemCoupon(client, code) {
   return staffCoupon({ ...winner, redeemed: true, redeemedAt });
 }
 
+async function markMailed(client, code) {
+  const winner = await findCoupon(client, code);
+  if (winner.mailed === true) return;
+  try {
+    await client.updateEntity({
+      partitionKey: PARTITION, rowKey: winner.rowKey, mailed: true
+    }, 'Merge', { etag: winner.etag, requestOptions: { timeout: 3000 } });
+  } catch (error) {
+    if (error.statusCode !== 412) throw error;
+  }
+}
+
 if (require.main === module) {
   Promise.resolve().then(() => initialize(getClient(), getSecret())).then(() => {
     console.log('Azure roulette table initialized; existing stock was not reset.');
@@ -224,6 +237,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  getClient, getSecret, award, initialize, readiness, verifyCoupon, redeemCoupon,
-  RouletteError, PARTITION, STOCK
+  getClient, getSecret, award, initialize, readiness, verifyCoupon, redeemCoupon, markMailed,
+  RouletteError, PARTITION, STOCK, NAMES
 };
