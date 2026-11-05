@@ -1,0 +1,10 @@
+{
+  "name": "gstar-copilot-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GSTAR × GitHub Copilot 팝업 – 쿠폰 생성·사용 API (SharePoint 저장)",
+  "main": "src/functions/*.js",
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "node --test test/*.test.js" },
+  "dependencies": { "@azure/functions": "^4.5.0" }
+}
