@@ -112,7 +112,7 @@ async function sendCouponMail(coupon) {
     });
     return true;
   } catch (error) {
-    console.error(`Coupon mail failed (${error.name}).`);
+    console.error(`Coupon mail failed (${error.name}, status ${error.statusCode ?? 'none'}, code ${error.code ?? 'none'}).`);
     return false;
   }
 }

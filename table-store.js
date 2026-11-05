@@ -224,6 +224,7 @@ async function markMailed(client, code) {
     }, 'Merge', { etag: winner.etag, requestOptions: { timeout: 3000 } });
   } catch (error) {
     if (error.statusCode !== 412) throw error;
+    console.warn('Coupon mail flag changed concurrently; mailed flag not saved.');
   }
 }
 
