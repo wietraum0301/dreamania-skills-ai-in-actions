@@ -46,8 +46,7 @@ p{margin:0;color:var(--muted);line-height:1.55}
 .btn.small{font-size:14px;padding:10px 12px;border-radius:12px;width:auto}
 .btn[disabled]{opacity:.45}
 label{font-size:13px;color:var(--muted);display:block;margin-block-end:6px}
-/* [수정 1] type=email 포함: 다크 테마 적용 + iOS에서 입력/붙여넣기 가능하도록 user-select:text */
-input[type=text],input[type=tel],input[type=email],input[type=number],input[type=password]{width:100%;padding:14px;border-radius:12px;border:1px solid var(--line);background:var(--bg2);color:var(--fg);font-size:17px;-webkit-user-select:text;user-select:text}
+input[type=text],input[type=tel],input[type=number],input[type=password]{width:100%;padding:14px;border-radius:12px;border:1px solid var(--line);background:var(--bg2);color:var(--fg);font-size:17px;-webkit-user-select:text;user-select:text}
 .row{display:flex;gap:10px}.row>*{flex:1}
 .check{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--muted)}
 .check input{width:22px;height:22px;flex:none;margin:0}
@@ -191,7 +190,6 @@ input[aria-invalid="true"]{border-color:var(--hot)}
 
   <section class="screen" id="s-coupon" aria-labelledby="cpPrize">
     <div class="coupon" id="coupon">
-      <div class="stamp" aria-hidden="true">사용 완료</div>
       <div class="big" id="cpEmoji" aria-hidden="true">🍺</div>
       <p style="margin-block-start:8px" id="cpHello">축하합니다! 🎉</p>
       <h2 id="cpPrize">맥주 1잔</h2>
@@ -217,11 +215,6 @@ input[aria-invalid="true"]{border-color:var(--hot)}
 <script>
 (function(){
 'use strict';
-/* ===== 설정 =====
-   Power Automate 흐름 A(참가·쿠폰 생성)의 'HTTP 요청을 받은 경우' 트리거 URL을 붙여 넣으세요.
-   쿠폰 생성·메일 발송·사용(redeem) 상태는 SharePoint(axjouney) 목록에서 관리됩니다.
-     - GSTARWinners : 쿠폰 1장 = 1행 (Redeemed, CouponMailed)
-     - GSTARSettings: 한정 수량, 진행 여부(open), 발급·사용·메일 집계(issued_*, redeemed_*, mailed_total) */
 var API_URL = '/api/roulette';
 var LINKS={
   pro:'https://github.com/github-copilot/signup?ref_product=copilot&ref_type=trial&ref_style=button&ref_plan=pro',
@@ -237,8 +230,6 @@ var PRIZES={
 };
 var SEGMENTS=['beer5','beer1','nachos','beer1','quesa','beer1','nachos','beer1','quesa','beer1'];
 var ROLES=['개발','기획','디자인','영업·마케팅','경영·관리','기타'];
-/* SharePoint 흐름 코드(GS-XXXXX)와 이전 백엔드 코드 형식 모두 허용 */
-var CODE_RE=/^(?:GS-[A-Z0-9]{5}|[A-Z0-9]{8}|GS-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/;
 
 /* ---------- 공통 ---------- */
 function $(id){return document.getElementById(id);}
@@ -259,12 +250,6 @@ function tap(el,fn){
   el.addEventListener('click',h);
 }
 function vibrate(p){try{if(navigator.vibrate)navigator.vibrate(p);}catch(e){}}
-function str(v){return typeof v==='string'?v:'';}
-/* [수정 3] 이메일 일부 가림: name@company.com -> na***@company.com */
-function maskEmail(e){
-  e=str(e);var at=e.lastIndexOf('@');if(at<1)return '';
-  return e.slice(0,Math.min(2,at))+'***'+e.slice(at);
-}
 
 document.getElementById('lnkPro').href=LINKS.pro;
 document.getElementById('lnkKeynote').href=LINKS.keynote;
@@ -275,9 +260,9 @@ function loadMine(){
   try{
     var c=JSON.parse(localStorage.getItem(KEY));
     return c&&Object.prototype.hasOwnProperty.call(PRIZES,c.prizeKey)&&
-      typeof c.code==='string'&&CODE_RE.test(c.code)&&
+      typeof c.code==='string'&&/^(?:[A-Z0-9]{8}|GS-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/.test(c.code)&&
       typeof c.nickname==='string'&&typeof c.company==='string'&&
-      typeof c.wonAt==='string'&&(c.wonAt===''||Number.isFinite(Date.parse(c.wonAt)))?c:null;
+      typeof c.wonAt==='string'&&Number.isFinite(Date.parse(c.wonAt))?c:null;
   }catch(e){console.warn('쿠폰 저장 정보를 읽을 수 없습니다.');return null;}
 }
 function saveMine(c){
@@ -302,7 +287,6 @@ tap($('btnBack1'),function(){show('s-intro');});
 function setErr(id,bad){var e=$('e-'+id);if(e)e.classList.toggle('on',bad);var i=$(id);if(i&&i.tagName==='INPUT')i.setAttribute('aria-invalid',bad?'true':'false');if(i&&bad)i.setAttribute('aria-describedby','e-'+id);return bad;}
 $('joinForm').addEventListener('submit',function(e){
   e.preventDefault();
-  /* 입력값은 앞뒤 공백만 지우고 입력한 그대로 보냄 */
   var name=$('inName').value.trim(),nick=$('inNick').value.trim(),comp=$('inCompany').value.trim(),
       phone=$('inPhone').value.replace(/\D/g,''),email=$('inEmail').value.trim(),agree=$('inAgree').checked;
   var bad=[];
@@ -439,9 +423,8 @@ drawWheel();
 
 function postJSON(url,data,timeoutMs){
   return new Promise(function(resolve,reject){
-    if(!url){reject(new Error('not_configured'));return;}
     var x=new XMLHttpRequest();x.open('POST',url,true);x.setRequestHeader('Content-Type','application/json');x.timeout=timeoutMs;
-    x.onload=function(){var body={};try{body=JSON.parse(x.responseText);}catch(e){if(x.status>=200&&x.status<300){reject(new Error('invalid_response'));return;}}resolve({status:x.status,body:body||{}});};
+    x.onload=function(){try{resolve({status:x.status,body:JSON.parse(x.responseText)});}catch(e){reject(new Error('invalid_response'));}};
     x.onerror=function(){reject(new Error('network'));};x.ontimeout=function(){reject(new Error('timeout'));};
     x.send(JSON.stringify(data));
   });
@@ -454,7 +437,6 @@ function spinTo(k,cb){
   var ticks=0,tk=setInterval(function(){vibrate(5);if(++ticks>14)clearInterval(tk);},300);
   setTimeout(cb,5400);
 }
-var CONFIG_ERRORS=['not_configured','table_not_initialized','invalid_inventory','invalid_coupon'];
 tap($('btnSpin'),function(){
   if(spinning)return;
   spinning=true;$('btnSpin').disabled=true;$('spinMsg').textContent='경품을 추첨하고 있어요…';
@@ -462,64 +444,34 @@ tap($('btnSpin'),function(){
   postJSON(API_URL,payload,30000).then(function(r){
     var b=r.body||{};
     if(r.status===409&&b.error==='sold_out'){
-      spinning=false;$('spinMsg').textContent='준비된 경품이 모두 소진되었습니다. 스태프에게 문의해 주세요.';return;
+      spinning=false;$('spinMsg').textContent='준비된 경품 500개가 모두 소진되었습니다. 스태프에게 문의해 주세요.';return;
     }
-    if(r.status===409&&b.error==='closed'){
-      spinning=false;$('spinMsg').textContent='추첨이 종료되었습니다. 스태프에게 문의해 주세요.';return;
-    }
-    /* 'ok'(이전 흐름)와 'awarded'(새 흐름) 모두 신규 당첨으로 처리 */
-    if(r.status>=200&&r.status<300&&b.code&&CODE_RE.test(String(b.code))&&Object.prototype.hasOwnProperty.call(PRIZES,b.prizeKey)&&
-      (b.status==='awarded'||b.status==='ok'||b.status==='duplicate')){
+    if(r.status>=200&&r.status<300&&b.code&&Object.prototype.hasOwnProperty.call(PRIZES,b.prizeKey)&&
+      (b.status==='awarded'||b.status==='duplicate')){
       $('spinMsg').textContent='';
-      var dup=b.status==='duplicate';
-      var wonAt=str(b.wonAt)&&Number.isFinite(Date.parse(b.wonAt))?b.wonAt:(dup?'':new Date().toISOString());
-      var c={code:String(b.code),prizeKey:b.prizeKey,
-        /* 중복일 때 서버가 이름을 안 주면 지금 입력값으로 채우지 않음(다른 정보일 수 있음) */
-        nickname:str(b.nickname)||(dup?'':player.nickname),
-        company:str(b.company)||(dup?'':player.company),
-        wonAt:wonAt,duplicate:dup,mailed:b.mailed===true,redeemed:b.redeemed===true,
-        emailMasked:str(b.emailMasked)||(dup?'':maskEmail(player.email))};
+      var c={code:String(b.code),prizeKey:b.prizeKey,nickname:b.nickname,company:b.company,wonAt:b.wonAt,duplicate:b.status==='duplicate',mailed:b.mailed===true};
       c.saved=saveMine(c);
       if(c.duplicate){spinning=false;showCoupon(c,false);return;}
       spinTo(c.prizeKey,function(){spinning=false;showCoupon(c,true);});
     }else{
-      throw new Error(r.status===400?'invalid_input':(str(b.error)||'invalid_response'));
+      var error=new Error(b.error||'invalid_response');throw error;
     }
   }).catch(function(error){
     spinning=false;$('btnSpin').disabled=false;
     console.warn('룰렛 요청 실패: '+error.message);
-    var m=error.message;
-    $('spinMsg').textContent=
-      CONFIG_ERRORS.indexOf(m)>=0?'행사 추첨 저장소 설정을 확인해야 합니다. 스태프에게 문의해 주세요.':
-      /* [수정 4] 같은 번호가 다른 참가 정보로 이미 등록된 경우 */
-      m==='identity_mismatch'?'이 휴대폰 번호는 다른 참가 정보로 이미 등록되어 있습니다. 스태프에게 문의해 주세요.':
-      m==='invalid_input'?'참가 정보를 확인해 주세요. 새로 고침 후 다시 입력해 주세요.':
+    $('spinMsg').textContent=['not_configured','table_not_initialized','identity_mismatch','invalid_inventory','invalid_coupon'].indexOf(error.message)>=0?'행사 추첨 저장소 설정을 확인해야 합니다. 스태프에게 문의해 주세요.':
+      error.message==='invalid_input'?'참가 정보를 확인해 주세요. 새로 고침 후 다시 입력해 주세요.':
       '추첨 결과를 확인하지 못했습니다. 다시 눌러 주세요. 같은 번호는 기존 쿠폰을 반환합니다.';
   });
 });
 function showCoupon(c,celebrate){
   var p=PRIZES[c.prizeKey];
   $('cpEmoji').textContent=p.emoji;$('cpPrize').textContent=p.name+' 당첨!';
-  $('coupon').classList.toggle('used',c.redeemed===true);
-  $('cpHello').textContent=c.redeemed?'이미 사용한 쿠폰입니다.':c.duplicate?'이미 참여하셨어요. 받으신 쿠폰입니다.':'축하합니다! 🎉';
+  $('cpHello').textContent=c.duplicate?'이미 참여하셨어요. 받으신 쿠폰입니다.':'축하합니다! 🎉';
   $('cpCode').textContent=c.code;
-  var meta=[];
-  if(c.nickname)meta.push(c.nickname);
-  if(c.company)meta.push(c.company);
-  if(c.wonAt)meta.push(new Date(c.wonAt).toLocaleString('ko-KR'));
-  $('cpMeta').textContent=meta.join(' · ');
-  /* [수정 2·3] 재참여 안내를 따로 하고, 받는 주소를 가려서 표시 */
-  var to=c.emailMasked?c.emailMasked+'(으)로 ':'';
-  var msg;
-  if(c.duplicate){
-    msg=c.mailed?'처음 참여 때 '+to+'쿠폰 메일이 발송되었습니다.':
-      '처음 참여 시 메일 발송이 확인되지 않았습니다. 이 화면을 캡처해 두세요.';
-  }else{
-    msg=c.mailed?to+'쿠폰 메일을 보냈습니다. 주소가 틀렸다면 스태프에게 알려 주세요.':
-      '메일은 발송되지 않았습니다. 이 화면을 캡처해 두세요.';
-  }
-  if(c.saved===false)msg+=' 기기에 쿠폰을 저장할 수 없어 화면 캡처가 필요합니다.';
-  $('cpMail').textContent=msg;
+  $('cpMeta').textContent=c.nickname+' · '+c.company+' · '+new Date(c.wonAt).toLocaleString('ko-KR');
+  $('cpMail').textContent=c.mailed?'쿠폰 메일도 발송되었습니다.':'메일은 발송되지 않았습니다. 이 화면을 캡처해 두세요.';
+  if(c.saved===false)$('cpMail').textContent+=' 기기에 쿠폰을 저장할 수 없어 화면 캡처가 필요합니다.';
   $('btnMine').hidden=false;
   show('s-coupon');if(celebrate){confetti();vibrate([30,60,30,60,120]);}
 }
