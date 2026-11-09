@@ -1,65 +1,176 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-
-name: Build and deploy ASP.Net Core app to Azure Web App - nacho
+name: Deploy homepage to Azure Web App - nacho
 
 on:
   push:
     branches:
-      - 'main'
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-nacho-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read #This is required for actions/checkout
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up .NET Core
-        uses: actions/setup-dotnet@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          dotnet-version: '11.x'
+          node-version: '24.x'
 
-      - name: Build with dotnet
-        run: dotnet build --configuration Release
+      - name: Test homepage server
+        run: |
+          npm ci
+          npm test
 
-      - name: dotnet publish
-        run: dotnet publish -c Release -o ${{env.DOTNET_ROOT}}/myapp
+      - name: Prepare deployment package
+        run: |
+          mkdir deploy
+          cp index.html staff.html server.js roulette.js staff-api.js table-store.js coupon-code.js coupon-mail.js package.json package-lock.json deploy/
+          npm ci --omit=dev --prefix deploy
 
-      - name: Upload artifact for deployment job
+      - name: Upload deployment artifact
         uses: actions/upload-artifact@v4
         with:
-          name: .net-app
-          path: ${{env.DOTNET_ROOT}}/myapp
+          name: web-app
+          path: deploy/
 
   deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs: build
     permissions:
-      id-token: write #This is required for requesting the JWT
-      contents: read #This is required for actions/checkout
-
+      id-token: write
+      contents: read
     steps:
-      - name: Download artifact from build job
+      - name: Download deployment artifact
         uses: actions/download-artifact@v4
         with:
-          name: .net-app
-      
+          name: web-app
+          path: deploy
+
+      - name: Set up Node.js for storage initialization
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_2F25EEB1D5F84A95B5717B5EA9DA5C74 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_F36C17A27CB642AA9B96D069FC2438F8 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_0B3161D375394ED3AF3BEA136633E4BE }}
+          client-id: 42f92d81-f7a7-4029-98e6-b4f9e61dbb0f
+          tenant-id: 97f42f55-f1db-4804-b1eb-08db083efd4f
+          subscription-id: 93898b2d-36ae-450b-9ef7-cbf806d72f5a
+
+      - name: Configure Linux runtime and startup command
+        run: |
+          resource_group=$(az webapp list --query "[?name=='nacho'].resourceGroup | [0]" --output tsv)
+          if [ -z "$resource_group" ]; then
+            echo "::error::Azure Web App nacho was not found in the configured subscription."
+            exit 1
+          fi
+          is_linux=$(az webapp show --name nacho --resource-group "$resource_group" --query reserved --output tsv)
+          if [ "$is_linux" != "true" ]; then
+            echo "::error::Azure Web App nacho must be a Linux app."
+            exit 1
+          fi
+          az webapp config set --name nacho --resource-group "$resource_group" \
+            --linux-fx-version 'NODE|24-lts' --startup-file 'npm start' --output none
+          az webapp update --name nacho --resource-group "$resource_group" --https-only true --output none
+          echo "AZURE_RESOURCE_GROUP=$resource_group" >> "$GITHUB_ENV"
+
+      - name: Provision and connect production Table Storage
+        run: |
+          export AZURE_STORAGE_CONNECTION_STRING
+          export ROULETTE_IDENTITY_SECRET
+          export ROULETTE_STAFF_PASSWORD
+          AZURE_STORAGE_CONNECTION_STRING=$(az webapp config appsettings list \
+            --name nacho --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[?name=='AZURE_STORAGE_CONNECTION_STRING'].value | [0]" --output tsv)
+          ROULETTE_IDENTITY_SECRET=$(az webapp config appsettings list \
+            --name nacho --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[?name=='ROULETTE_IDENTITY_SECRET'].value | [0]" --output tsv)
+          ROULETTE_STAFF_PASSWORD=$(az webapp config appsettings list \
+            --name nacho --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "[?name=='ROULETTE_STAFF_PASSWORD'].value | [0]" --output tsv)
+          if [ -z "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+            app_id=$(az webapp show --name nacho --resource-group "$AZURE_RESOURCE_GROUP" --query id --output tsv)
+            location=$(az webapp show --name nacho --resource-group "$AZURE_RESOURCE_GROUP" --query location --output tsv)
+            account="gstar$(printf '%s' "$app_id" | sha256sum | cut -c1-18)"
+            exists=$(az storage account list --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "[?name=='$account'].name | [0]" --output tsv)
+            if [ -z "$exists" ]; then
+              az storage account create --name "$account" --resource-group "$AZURE_RESOURCE_GROUP" \
+                --location "$location" --kind StorageV2 --sku Standard_LRS \
+                --https-only true --min-tls-version TLS1_2 --allow-blob-public-access false --output none
+            fi
+            AZURE_STORAGE_CONNECTION_STRING=$(az storage account show-connection-string \
+              --name "$account" --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query connectionString --output tsv)
+          fi
+          echo "::add-mask::$AZURE_STORAGE_CONNECTION_STRING"
+          if [ -z "$ROULETTE_IDENTITY_SECRET" ]; then
+            ROULETTE_IDENTITY_SECRET=$(openssl rand -hex 32)
+          fi
+          echo "::add-mask::$ROULETTE_IDENTITY_SECRET"
+          if [ -z "$ROULETTE_STAFF_PASSWORD" ]; then
+            ROULETTE_STAFF_PASSWORD=$(openssl rand -hex 32)
+          fi
+          echo "::add-mask::$ROULETTE_STAFF_PASSWORD"
+          settings=$(mktemp)
+          trap 'rm -f "$settings"' EXIT
+          jq -n '[
+            {name:"AZURE_STORAGE_CONNECTION_STRING",value:env.AZURE_STORAGE_CONNECTION_STRING},
+            {name:"ROULETTE_IDENTITY_SECRET",value:env.ROULETTE_IDENTITY_SECRET},
+            {name:"ROULETTE_STAFF_PASSWORD",value:env.ROULETTE_STAFF_PASSWORD}
+          ]' > "$settings"
+          az webapp config appsettings set --name nacho --resource-group "$AZURE_RESOURCE_GROUP" \
+            --settings "@$settings" --output none
+          cd deploy
+          npm run setup:table
 
       - name: Deploy to Azure Web App
-        id: deploy-to-webapp
+        id: deploy
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'nacho'
-          slot-name: 'Production'
-          package: .
-          
+          app-name: nacho
+          slot-name: Production
+          package: deploy
+          startup-command: 'npm start'
+
+      - name: Verify deployed homepage
+        timeout-minutes: 5
+        env:
+          WEBAPP_URL: ${{ steps.deploy.outputs.webapp-url }}
+        run: |
+          if [ -z "$WEBAPP_URL" ]; then
+            echo "::error::Deployment did not return the Web App URL."
+            exit 1
+          fi
+          for attempt in {1..18}; do
+            if curl --fail --silent --show-error --max-time 15 "$WEBAPP_URL" --output homepage.html &&
+              cmp --silent deploy/index.html homepage.html &&
+              curl --fail --silent --show-error --max-time 15 \
+                "${WEBAPP_URL%/}/api/roulette/status" --output readiness.json &&
+              jq --exit-status '.ready == true' readiness.json > /dev/null &&
+              curl --fail --silent --show-error --max-time 15 \
+                "${WEBAPP_URL%/}/staff" --output staff.html &&
+              cmp --silent deploy/staff.html staff.html &&
+              [ "$(curl --silent --show-error --max-time 15 --output staff-session.json \
+                --write-out '%{http_code}' "${WEBAPP_URL%/}/api/staff/session")" = "401" ] &&
+              jq --exit-status '.error == "unauthorized"' staff-session.json > /dev/null; then
+              echo "Homepage, production Table Storage and staff authentication are ready."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Homepage, Table Storage or staff authentication verification failed."
+          exit 1
