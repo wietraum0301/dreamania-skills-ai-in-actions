@@ -66,9 +66,9 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_88C80F32D7FF4E0B8B23AFE7E2BB2F09 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_BFA5BCDE28C44F6981EA40EC4681F30E }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_C03E7724126C4166BE5195CECA09C4BE }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_22600C87375C40FB82FE5FC9DCD4B30E }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_8A9BEBC0CF0A40D5BE66F5BDCBCDB435 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_E1F3D82AD0AF44F9977DC3BBF04FEC24 }}
 
       - name: Configure Linux runtime and startup command
         run: |
